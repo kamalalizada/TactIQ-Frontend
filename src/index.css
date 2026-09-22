@@ -1,0 +1,71 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-pitch-950: #06120c;
+  --color-pitch-900: #0a1b12;
+  --color-pitch-800: #0f2a1c;
+  --color-pitch-700: #16412b;
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-pitch-950 text-slate-200 antialiased;
+    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@utility card {
+  @apply rounded-xl border border-white/10 bg-white/5 p-5 shadow-lg shadow-black/30;
+}
+
+/* Shared button shape; the variants below add the colours. */
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold
+         transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+}
+
+@utility btn-primary {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold
+         transition-colors disabled:cursor-not-allowed disabled:opacity-40
+         bg-lime-400 text-pitch-950 hover:bg-lime-300;
+}
+
+@utility btn-ghost {
+  @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold
+         transition-colors disabled:cursor-not-allowed disabled:opacity-40
+         border border-white/15 text-slate-200 hover:bg-white/10;
+}
+
+@utility field {
+  @apply w-full rounded-lg border border-white/15 bg-black/30 px-3 py-2 text-sm text-slate-100
+         outline-none placeholder:text-slate-500 focus:border-lime-400/60;
+}
+
+@utility label {
+  @apply mb-1.5 block text-xs font-medium tracking-wide text-slate-400 uppercase;
+}
+
+@keyframes toast {
+  from {
+    opacity: 0;
+    transform: translateY(-0.75rem) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
