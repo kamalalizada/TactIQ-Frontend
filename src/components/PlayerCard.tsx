@@ -1,18 +1,6 @@
-import { Position, type Player } from '@/types'
-
-const POSITION_LABELS: Record<Position, string> = {
-  [Position.GK]: 'GK',
-  [Position.DEF]: 'DEF',
-  [Position.MID]: 'MID',
-  [Position.FWD]: 'FWD',
-}
-
-const POSITION_STYLES: Record<Position, string> = {
-  [Position.GK]: 'bg-amber-400/15 text-amber-300 border-amber-400/30',
-  [Position.DEF]: 'bg-sky-400/15 text-sky-300 border-sky-400/30',
-  [Position.MID]: 'bg-lime-400/15 text-lime-300 border-lime-400/30',
-  [Position.FWD]: 'bg-rose-400/15 text-rose-300 border-rose-400/30',
-}
+import { PositionBadge } from '@/components/ui/Badge'
+import { ProgressBar } from '@/components/ui/ProgressBar'
+import type { Player } from '@/types'
 
 const ATTRIBUTES = [
   { key: 'pace', label: 'PAC' },
@@ -23,35 +11,47 @@ const ATTRIBUTES = [
   { key: 'physical', label: 'PHY' },
 ] as const
 
+/** Colours the overall rating the way football games do: elite down to squad filler. */
+function overallTone(overall: number) {
+  if (overall >= 85) return 'text-win'
+  if (overall >= 78) return 'text-accent'
+  if (overall >= 70) return 'text-ink'
+  return 'text-muted'
+}
+
 export function PlayerCard({ player }: { player: Player }) {
   return (
-    <div className="card p-4">
+    <div className="rounded-lg border border-line bg-panel p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <p className="truncate font-semibold">{player.name}</p>
+          <p className="truncate text-sm font-semibold">{player.name}</p>
           <div className="mt-1 flex items-center gap-2">
-            <span
-              className={`rounded border px-1.5 py-0.5 text-[0.65rem] font-bold ${
-                POSITION_STYLES[player.position]
-              }`}
-            >
-              {POSITION_LABELS[player.position]}
-            </span>
-            <span className="text-xs text-slate-500">#{player.shirtNumber}</span>
+            <PositionBadge position={player.position} />
+            <span className="text-xs text-muted">#{player.shirtNumber}</span>
           </div>
         </div>
 
         <div className="shrink-0 text-right">
-          <div className="text-2xl leading-none font-black tabular-nums">{player.overall}</div>
-          <div className="text-[0.6rem] tracking-wide text-slate-500 uppercase">OVR</div>
+          <div className={`text-2xl leading-none font-black ${overallTone(player.overall)}`}>
+            {player.overall}
+          </div>
+          <div className="text-[0.6rem] tracking-wide text-muted uppercase">OVR</div>
         </div>
       </div>
 
-      <dl className="mt-3 grid grid-cols-3 gap-x-3 gap-y-1.5 text-xs">
+      <dl className="mt-3 space-y-1">
         {ATTRIBUTES.map((attribute) => (
-          <div key={attribute.key} className="flex justify-between gap-1">
-            <dt className="text-slate-500">{attribute.label}</dt>
-            <dd className="font-semibold tabular-nums">{player[attribute.key]}</dd>
+          <div key={attribute.key} className="flex items-center gap-2">
+            <dt className="w-8 shrink-0 text-[0.65rem] text-muted">{attribute.label}</dt>
+            <ProgressBar
+              value={player[attribute.key]}
+              max={99}
+              tone="muted"
+              className="h-1 flex-1"
+            />
+            <dd className="w-6 shrink-0 text-right text-[0.7rem] font-semibold">
+              {player[attribute.key]}
+            </dd>
           </div>
         ))}
       </dl>

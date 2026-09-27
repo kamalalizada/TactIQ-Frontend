@@ -1,18 +1,23 @@
 import { useEffect } from 'react'
 
+import { isMajorEvent } from '@/components/EventFeed'
 import { MatchEventType, type LiveEvent } from '@/types'
 
-/** Announces goals and substitutions as they come off the wire. */
+const SCORING: number[] = [MatchEventType.Goal, MatchEventType.Penalty, MatchEventType.OwnGoal]
+
+/** Announces the events worth interrupting for: goals, cards, substitutions. */
 export function GoalToast({ event, onDone }: { event: LiveEvent | null; onDone: () => void }) {
+  const worthShowing = event !== null && isMajorEvent(event)
+
   useEffect(() => {
-    if (!event) return
-    const timer = setTimeout(onDone, event.eventType === MatchEventType.Goal ? 3200 : 2200)
+    if (!worthShowing) return
+    const timer = setTimeout(onDone, 3000)
     return () => clearTimeout(timer)
-  }, [event, onDone])
+  }, [worthShowing, event, onDone])
 
-  if (!event) return null
+  if (!event || !worthShowing) return null
 
-  const isGoal = event.eventType === MatchEventType.Goal
+  const isGoal = SCORING.includes(event.eventType)
 
   return (
     <div
@@ -21,16 +26,12 @@ export function GoalToast({ event, onDone }: { event: LiveEvent | null; onDone: 
       className="pointer-events-none fixed inset-x-0 top-20 z-50 flex justify-center px-4"
     >
       <div
-        className={`animate-[toast_0.25s_ease-out] rounded-xl border px-6 py-4 text-center shadow-2xl backdrop-blur ${
-          isGoal
-            ? 'border-lime-400/40 bg-lime-400/15 shadow-lime-400/20'
-            : 'border-white/15 bg-black/70'
+        className={`animate-[toast_0.25s_ease-out] rounded-lg border px-6 py-4 text-center shadow-2xl ${
+          isGoal ? 'border-win/40 bg-win/15' : 'border-line bg-panel'
         }`}
       >
-        {isGoal && (
-          <p className="text-3xl font-black tracking-tight text-lime-300">GOL! ⚽</p>
-        )}
-        <p className={isGoal ? 'mt-1 text-sm text-lime-100' : 'text-sm text-slate-200'}>
+        {isGoal && <p className="text-3xl font-black tracking-tight text-win">GOAL!</p>}
+        <p className={`text-sm text-ink ${isGoal ? 'mt-1' : ''}`}>
           {event.minute}′ — {event.description}
         </p>
       </div>

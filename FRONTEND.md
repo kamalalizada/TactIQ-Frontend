@@ -101,6 +101,9 @@ Auth endpoint-ləri `{"errors": [...]}`, qalanları `ProblemDetails` qaytarır. 
 ### 7. Logo yoxdur
 `logoUrl` həmişə `null` — komanda adının ilk hərfi dairə içində placeholder kimi göstərilir.
 
+### 8. `leagueId` ilə birbaşa heyət
+`MatchDto` və `LiveStateDto` artıq `leagueId` daşıyır. `useManagedSquad(leagueId)` birbaşa həmin liqanın komandalarını çəkir — əvvəlki "bütün liqaların fikstürlərini gəz" axtarışı silindi.
+
 ---
 
 ## Müvəqqəti həllər
@@ -111,18 +114,12 @@ Login ekranı hazırda keçilir. Token yoxdursa, tətbiq `demo@tactiq.local` / `
 - Kod: `src/lib/auth.ts` → `ensureSignedIn()`
 - Login divarını geri qaytarmaq üçün: `App.tsx`-də `RequireAuth` wrapper-ini bərpa et. `/login` marşrutu və `LoginPage` yerindədir, silinməyib.
 
-### Matçın liqasını tapmaq
-`MatchDto`-da və `LiveStateDto`-da `leagueId` yoxdur. Əvəzetmə siyahısı üçün heyəti tapmaq məqsədilə `useManagedSquad` istifadəçinin liqalarını gəzib matçın hansına aid olduğunu axtarır (`GET /fixtures` ilə).
-
-> **Backend-ə istək:** `MatchDto`-ya və `LiveStateDto`-ya `leagueId` əlavə edilsə, bu hook bir sətrə düşər və artıq sorğular aradan qalxar.
-
 ---
 
 ## Backend-dən gözlənilən (bloklamır)
 
 | Nə | Niyə lazımdır |
 |---|---|
-| `MatchDto.leagueId` / `LiveStateDto.leagueId` | Yuxarıdakı axtarışı aradan qaldırar |
 | Komandanı sonradan dəyişmək endpoint-i | İstifadəçi liqa yaradandan sonra komanda seçə bilsin |
 | `MatchEvent.playerId` doldurulması | "Kim qol vurdu" göstərmək üçün |
 | Logo URL-ləri | Placeholder əvəzinə real gerb |

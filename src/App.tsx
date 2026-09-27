@@ -1,13 +1,24 @@
-import { useEffect, useState } from 'react'
+import { Suspense, lazy, useEffect, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 
 import { ErrorNote, Spinner } from '@/components/States'
 import { auth, ensureSignedIn } from '@/lib/auth'
-import { LeagueDetailPage } from '@/pages/LeagueDetailPage'
+import { DashboardPage } from '@/pages/DashboardPage'
 import { LeaguesPage } from '@/pages/LeaguesPage'
-import { LiveMatchPage } from '@/pages/LiveMatchPage'
+import { LeagueTablePage } from '@/pages/LeagueTablePage'
 import { LoginPage } from '@/pages/LoginPage'
+import { NewLeaguePage } from '@/pages/NewLeaguePage'
+import { PickTeamPage } from '@/pages/PickTeamPage'
+import { TeamDetailPage } from '@/pages/TeamDetailPage'
+import { CupPage } from '@/pages/CupPage'
+import { SquadPage } from '@/pages/SquadPage'
+import { StatisticsPage } from '@/pages/StatisticsPage'
 import { TeamsPage } from '@/pages/TeamsPage'
+
+// SignalR only matters on this one screen, so it loads with it.
+const LiveMatchPage = lazy(() =>
+  import('@/pages/LiveMatchPage').then((module) => ({ default: module.LiveMatchPage })),
+)
 
 export default function App() {
   const [ready, setReady] = useState(Boolean(auth.token))
@@ -31,8 +42,8 @@ export default function App() {
     return (
       <div className="mx-auto max-w-md px-4 py-20">
         <ErrorNote error={error} />
-        <p className="mt-3 text-center text-xs text-slate-500">
-          Check that the API is running on port 5064.
+        <p className="mt-3 text-center text-xs text-muted">
+          Check that the API is running on http://localhost:5199.
         </p>
       </div>
     )
@@ -43,9 +54,23 @@ export default function App() {
   return (
     <Routes>
       <Route path="/" element={<LeaguesPage />} />
-      <Route path="/leagues/:leagueId" element={<LeagueDetailPage />} />
-      <Route path="/leagues/:leagueId/teams" element={<TeamsPage />} />
-      <Route path="/matches/:matchId" element={<LiveMatchPage />} />
+      <Route path="/seasons/new" element={<NewLeaguePage />} />
+      <Route path="/seasons/:seasonId" element={<DashboardPage />} />
+      <Route path="/seasons/:seasonId/pick-team" element={<PickTeamPage />} />
+      <Route path="/seasons/:seasonId/table" element={<LeagueTablePage />} />
+      <Route path="/seasons/:seasonId/teams" element={<TeamsPage />} />
+      <Route path="/seasons/:seasonId/teams/:teamId" element={<TeamDetailPage />} />
+      <Route path="/seasons/:seasonId/squad" element={<SquadPage />} />
+      <Route path="/seasons/:seasonId/statistics" element={<StatisticsPage />} />
+      <Route path="/seasons/:seasonId/cup" element={<CupPage />} />
+      <Route
+        path="/matches/:matchId/live"
+        element={
+          <Suspense fallback={<Spinner label="Matç yüklənir…" />}>
+            <LiveMatchPage />
+          </Suspense>
+        }
+      />
 
       {/* Kept reachable for when the login wall goes back up. */}
       <Route path="/login" element={<LoginPage />} />

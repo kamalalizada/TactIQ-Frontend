@@ -1,32 +1,35 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useNavigate, useParams } from 'react-router-dom'
 
-import { matchApi } from '@/api/endpoints'
+import { competitionApi, matchApi } from '@/api/endpoints'
+import { EventFeed } from '@/components/EventFeed'
 import { GoalToast } from '@/components/GoalToast'
 import { Shell } from '@/components/Shell'
 import { ErrorNote, Spinner } from '@/components/States'
+import { SubstitutionModal } from '@/components/SubstitutionModal'
 import { TacticsPanel } from '@/components/TacticsPanel'
+import { TeamCrest } from '@/components/ui/TeamCrest'
 import { useLiveMatch } from '@/lib/useLiveMatch'
-import { useManagedSquad } from '@/lib/useManagedSquad'
 import {
   LiveMatchStatus,
-  MatchEventType,
   TacticalStyle,
-  type LiveEvent,
   type LiveState,
   type TacticsUpdateRequest,
 } from '@/types'
 
-const SPEEDS = [1, 2, 4] as const
+const FULL_TIME = 90
 
 export function LiveMatchPage() {
   const { matchId = '' } = useParams()
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
 
   const { state, connected, isFinished, lastEvent, clearLastEvent, ready, apply } =
     useLiveMatch(matchId)
+
   const [kickedOff, setKickedOff] = useState(false)
+  const [subOpen, setSubOpen] = useState(false)
 
   const start = useMutation({
     mutationFn: async () => {
@@ -46,7 +49,12 @@ export function LiveMatchPage() {
 
   const tactics = useMutation({
     mutationFn: (request: TacticsUpdateRequest) => matchApi.updateTactics(matchId, request),
-    onSuccess: apply,
+    onSuccess: (next) => {
+      apply(next)
+      setSubOpen(false)
+      // The squad's isStarter flags moved, so the lists must be refetched.
+      queryClient.invalidateQueries({ queryKey: ['teams', next.seasonId] })
+    },
   })
 
   const speed = useMutation({
@@ -64,14 +72,32 @@ export function LiveMatchPage() {
     onSuccess: apply,
   })
 
-  // The result is now in the database and the league week has moved on.
+  // Once the manager's match is in, the rest of the round is played out so the
+  // week completes in one go rather than needing a second click.
+  const competitionId = state?.competitionId
+  const [roundSettled, setRoundSettled] = useState(false)
+
   useEffect(() => {
-    if (!isFinished) return
-    queryClient.invalidateQueries({ queryKey: ['leagues'] })
-    queryClient.invalidateQueries({ queryKey: ['league'] })
-    queryClient.invalidateQueries({ queryKey: ['standings'] })
-    queryClient.invalidateQueries({ queryKey: ['fixtures'] })
-  }, [isFinished, queryClient])
+    if (!isFinished || !competitionId || roundSettled) return
+
+    setRoundSettled(true)
+
+    // Only this competition is advanced: the other leagues in the season keep
+    // their own clock and are moved on from the dashboard.
+    competitionApi
+      .simulateWeek(competitionId)
+      .catch(() => {
+        // Nothing left to play, or the season is over; the result still stands.
+      })
+      .finally(() => {
+        queryClient.invalidateQueries({ queryKey: ['seasons'] })
+        queryClient.invalidateQueries({ queryKey: ['season'] })
+        queryClient.invalidateQueries({ queryKey: ['standings'] })
+        queryClient.invalidateQueries({ queryKey: ['fixtures'] })
+        queryClient.invalidateQueries({ queryKey: ['statistics'] })
+        queryClient.invalidateQueries({ queryKey: ['cup'] })
+      })
+  }, [isFinished, competitionId, roundSettled, queryClient])
 
   if (!state && !start.isPending && !kickedOff) {
     return (
@@ -84,7 +110,7 @@ export function LiveMatchPage() {
   if (!state) {
     return (
       <Shell>
-        <Spinner label="Matç başlayır…" />
+        <Spinner label="Kicking off…" />
       </Shell>
     )
   }
@@ -95,52 +121,20 @@ export function LiveMatchPage() {
     <Shell>
       <GoalToast event={lastEvent} onDone={clearLastEvent} />
 
-      <div className="mb-4">
-        <Link to="/" className="text-xs text-slate-400 hover:text-lime-400">
-          ← Geri
-        </Link>
-      </div>
-
       <Scoreboard state={state} connected={connected} />
 
-      {isFinished ? (
+      {isFinished && (
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <Link to="/" className="btn-primary">
-            Dashboard-a qayıt
-          </Link>
-          <span className="text-sm text-slate-400">Matç bitdi, nəticə cədvələ yazıldı.</span>
-        </div>
-      ) : (
-        <div className="mt-4 flex flex-wrap items-center gap-2">
-          <div className="flex gap-1 rounded-lg bg-black/30 p-1">
-            {SPEEDS.map((multiplier) => (
-              <button
-                key={multiplier}
-                type="button"
-                onClick={() => speed.mutate(multiplier)}
-                className={`rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${
-                  state.speedMultiplier === multiplier
-                    ? 'bg-lime-400 text-pitch-950'
-                    : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                {multiplier}×
-              </button>
-            ))}
-          </div>
-
-          <button type="button" className="btn-ghost" onClick={() => pause.mutate(!isPaused)}>
-            {isPaused ? 'Davam et' : 'Dayandır'}
-          </button>
-
           <button
             type="button"
-            className="btn-ghost"
-            disabled={finish.isPending}
-            onClick={() => finish.mutate()}
+            className="btn-primary"
+            onClick={() => navigate(`/seasons/${state.seasonId}`)}
           >
-            {finish.isPending ? 'Bitirilir…' : 'Matçı bitir'}
+            İdarə Panelinə qayıt
           </button>
+          <span className="text-sm text-muted">
+            Nəticə cədvələ yazıldı, həftənin qalan matçları oynanıldı.
+          </span>
         </div>
       )}
 
@@ -149,67 +143,48 @@ export function LiveMatchPage() {
           <ErrorNote error={finish.error} />
         </div>
       )}
-      {tactics.isError && (
-        <div className="mt-3">
-          <ErrorNote error={tactics.error} />
-        </div>
-      )}
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_20rem]">
-        <section>
-          <h3 className="mb-3 text-sm font-semibold tracking-wide text-slate-400 uppercase">
-            Hadisələr
-          </h3>
-          <Timeline events={state.events} homeTeamId={state.homeTeamId} />
+      <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_19rem]">
+        <section className="rounded-lg border border-line bg-panel p-4">
+          <h3 className="mb-1 text-sm font-semibold">Match Events</h3>
+          <EventFeed events={state.events} homeTeamId={state.homeTeamId} newestFirst />
         </section>
 
-        <aside className="card">
-          <h3 className="mb-4 text-sm font-semibold tracking-wide text-slate-400 uppercase">
-            Taktika
-          </h3>
+        <aside className="rounded-lg border border-line bg-panel p-4">
+          <h3 className="mb-4 text-sm font-semibold">Tactics</h3>
 
-          <LiveTactics
+          <TacticsPanel
             state={state}
-            matchId={matchId}
             disabled={isFinished}
+            paused={isPaused}
+            finishing={finish.isPending}
             onStyle={(style) => tactics.mutate({ style })}
-            onFormation={(formation) => tactics.mutate({ formation })}
-            onSubstitute={(playerOutId, playerInId) =>
-              tactics.mutate({ substitution: { playerOutId, playerInId } })
-            }
+            onSpeed={(multiplier) => speed.mutate(multiplier)}
+            onOpenSubstitution={() => setSubOpen(true)}
+            onPause={() => pause.mutate(!isPaused)}
+            onFinish={() => finish.mutate()}
           />
+
+          {tactics.isError && !subOpen && (
+            <div className="mt-3">
+              <ErrorNote error={tactics.error} />
+            </div>
+          )}
         </aside>
       </div>
+
+      <SubstitutionModal
+        open={subOpen}
+        squad={state.squad}
+        remaining={state.substitutionsRemaining}
+        pending={tactics.isPending}
+        error={tactics.isError ? tactics.error : null}
+        onClose={() => setSubOpen(false)}
+        onConfirm={(playerOutId, playerInId) =>
+          tactics.mutate({ substitution: { playerOutId, playerInId } })
+        }
+      />
     </Shell>
-  )
-}
-
-function LiveTactics({
-  state,
-  matchId,
-  disabled,
-  onStyle,
-  onFormation,
-  onSubstitute,
-}: {
-  state: LiveState
-  matchId: string
-  disabled: boolean
-  onStyle: (style: TacticalStyle) => void
-  onFormation: (formation: string) => void
-  onSubstitute: (playerOutId: string, playerInId: string) => void
-}) {
-  const { squad } = useManagedSquad(matchId)
-
-  return (
-    <TacticsPanel
-      state={state}
-      team={squad}
-      disabled={disabled}
-      onStyle={onStyle}
-      onFormation={onFormation}
-      onSubstitute={onSubstitute}
-    />
   )
 }
 
@@ -225,14 +200,14 @@ function KickOff({
   return (
     <div className="mx-auto max-w-md">
       <div className="card space-y-4 text-center">
-        <h2 className="text-xl font-bold">Matça hazırsan?</h2>
-        <p className="text-sm text-slate-400">
-          Matç dəqiqə-dəqiqə gedəcək. İstənilən anda taktikanı dəyişə, oyunçu əvəz edə və sürəti
-          tənzimləyə bilərsən.
+        <h2 className="text-xl font-bold">Ready for kick-off</h2>
+        <p className="text-sm text-muted">
+          The match runs minute by minute. Change tactics, swap players and adjust the speed at any
+          point.
         </p>
         {error ? <ErrorNote error={error} /> : null}
         <button type="button" className="btn-primary w-full" onClick={onStart} disabled={pending}>
-          {pending ? 'Başlayır…' : 'Matçı başlat'}
+          {pending ? 'Starting…' : 'Kick off'}
         </button>
       </div>
     </div>
@@ -243,70 +218,51 @@ function Scoreboard({ state, connected }: { state: LiveState; connected: boolean
   const finished = state.status === LiveMatchStatus.Finished
 
   return (
-    <div className="card">
+    <div className="rounded-lg border border-line bg-panel px-5 py-4">
       <div className="flex items-center justify-between gap-4">
-        <TeamName name={state.homeTeamName} align="right" />
+        <TeamSide name={state.homeTeamName} align="left" />
 
-        <div className="text-center">
-          <div className="text-4xl font-black tabular-nums">
-            {state.homeGoals} <span className="text-slate-600">–</span> {state.awayGoals}
+        <div className="shrink-0 text-center">
+          <div className="text-3xl font-black sm:text-4xl">
+            {state.homeGoals} <span className="text-muted">-</span> {state.awayGoals}
           </div>
-          <div className="mt-1 text-xs font-semibold tracking-wide text-lime-400 uppercase">
-            {finished ? 'Matç bitdi' : `${state.minute}′`}
-            {state.status === LiveMatchStatus.Paused && ' · dayandırılıb'}
+          <div className="mt-0.5 text-xs font-semibold text-win">
+            {finished ? "Full time" : `${state.minute}′`}
+            {state.status === LiveMatchStatus.Paused && ' · paused'}
           </div>
         </div>
 
-        <TeamName name={state.awayTeamName} align="left" />
+        <TeamSide name={state.awayTeamName} align="right" />
       </div>
 
-      <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-black/40">
-        <div
-          className="h-full bg-lime-400 transition-[width] duration-500"
-          style={{ width: `${Math.min(100, (state.minute / 90) * 100)}%` }}
-        />
+      <div className="mt-3 flex items-center gap-3">
+        <div className="h-1 flex-1 overflow-hidden rounded-full bg-bg">
+          <div
+            className={`h-full transition-[width] duration-500 ${finished ? 'bg-win' : 'bg-accent'}`}
+            style={{ width: `${Math.min(100, (state.minute / FULL_TIME) * 100)}%` }}
+          />
+        </div>
+        <span className="shrink-0 text-xs text-muted">
+          {state.minute} / {FULL_TIME}
+        </span>
       </div>
 
       {!connected && !finished && (
-        <p className="mt-2 text-center text-xs text-amber-400">Bağlantı bərpa olunur…</p>
+        <p className="mt-2 text-center text-xs text-draw">Reconnecting…</p>
       )}
     </div>
   )
 }
 
-function TeamName({ name, align }: { name: string; align: 'left' | 'right' }) {
+function TeamSide({ name, align }: { name: string; align: 'left' | 'right' }) {
   return (
-    <div className={`min-w-0 flex-1 ${align === 'right' ? 'text-right' : 'text-left'}`}>
-      <span className="truncate text-lg font-semibold">{name}</span>
+    <div
+      className={`flex min-w-0 flex-1 items-center gap-2.5 ${
+        align === 'right' ? 'flex-row-reverse' : ''
+      }`}
+    >
+      <TeamCrest name={name} size="md" />
+      <span className="truncate font-semibold">{name}</span>
     </div>
-  )
-}
-
-function Timeline({ events, homeTeamId }: { events: LiveEvent[]; homeTeamId: string }) {
-  if (events.length === 0) {
-    return <p className="py-10 text-center text-sm text-slate-500">Hələ hadisə yoxdur.</p>
-  }
-
-  return (
-    <ol className="space-y-2">
-      {[...events].reverse().map((event, index) => {
-        const isHome = event.teamId === homeTeamId
-
-        return (
-          <li
-            key={`${event.minute}-${index}`}
-            className={`card flex items-center gap-3 p-3 text-sm ${
-              isHome ? '' : 'flex-row-reverse text-right'
-            }`}
-          >
-            <span className="w-10 shrink-0 text-xs font-bold text-slate-500 tabular-nums">
-              {event.minute}′
-            </span>
-            <span aria-hidden>{event.eventType === MatchEventType.Goal ? '⚽' : '🔁'}</span>
-            <span className="flex-1">{event.description}</span>
-          </li>
-        )
-      })}
-    </ol>
   )
 }

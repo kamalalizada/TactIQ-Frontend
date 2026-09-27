@@ -33,18 +33,28 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T)
 }
 
+/** Readable stand-ins for the bare statuses the API returns without detail. */
+const STATUS_MESSAGES: Record<number, string> = {
+  400: 'Sorğu düzgün deyil.',
+  403: 'Bu əməliyyata icazəniz yoxdur.',
+  404: 'Axtardığınız məlumat tapılmadı.',
+  409: 'Bu əməliyyat indi mümkün deyil.',
+  500: 'Serverdə xəta baş verdi.',
+}
+
 async function errorMessage(response: Response): Promise<string> {
   try {
     const body = await response.json()
     // ProblemDetails from the API, or an Identity error list.
     if (typeof body?.detail === 'string') return body.detail
     if (Array.isArray(body?.errors)) return body.errors.join(' ')
-    if (typeof body?.title === 'string') return body.title
   } catch {
-    // Fall through to the status text.
+    // Fall through to the status message.
   }
 
-  return response.statusText || 'Something went wrong.'
+  // ProblemDetails titles like "Not Found" read as raw plumbing, so they are
+  // replaced rather than shown to the manager.
+  return STATUS_MESSAGES[response.status] ?? 'Xəta baş verdi.'
 }
 
 export const api = {

@@ -1,6 +1,4 @@
-import { useState } from 'react'
-
-import { Position, TacticalStyle, type LiveState, type Player, type Team } from '@/types'
+import { TacticalStyle, type LiveState } from '@/types'
 
 const STYLES = [
   { value: TacticalStyle.Defensive, label: 'Defensive' },
@@ -8,53 +6,45 @@ const STYLES = [
   { value: TacticalStyle.Attacking, label: 'Attacking' },
 ] as const
 
-const FORMATIONS = ['4-4-2', '4-3-3', '4-2-3-1', '3-5-2', '5-3-2'] as const
-
-const POSITION_LABEL: Record<Position, string> = {
-  [Position.GK]: 'GK',
-  [Position.DEF]: 'DEF',
-  [Position.MID]: 'MID',
-  [Position.FWD]: 'FWD',
-}
+const SPEEDS = [1, 2, 4] as const
 
 export function TacticsPanel({
   state,
-  team,
   disabled,
   onStyle,
-  onFormation,
-  onSubstitute,
+  onSpeed,
+  onOpenSubstitution,
+  onPause,
+  onFinish,
+  finishing,
+  paused,
 }: {
   state: LiveState
-  team: Team | undefined
   disabled: boolean
   onStyle: (style: TacticalStyle) => void
-  onFormation: (formation: string) => void
-  onSubstitute: (playerOutId: string, playerInId: string) => void
+  onSpeed: (multiplier: number) => void
+  onOpenSubstitution: () => void
+  onPause: () => void
+  onFinish: () => void
+  finishing: boolean
+  paused: boolean
 }) {
-  const [playerOut, setPlayerOut] = useState('')
-  const [playerIn, setPlayerIn] = useState('')
-
-  // The live squad is the source of truth for who is actually on the pitch.
-  const onPitch = team?.players.filter((p) => p.isStarter) ?? []
-  const bench = team?.players.filter((p) => !p.isStarter) ?? []
-  const canSub = !disabled && state.substitutionsRemaining > 0 && playerOut && playerIn
-
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div>
-        <span className="label">Tactical style</span>
-        <div className="grid grid-cols-3 gap-1 rounded-lg bg-black/30 p-1">
+        <span className="mb-1.5 block text-xs text-muted">Playing Style</span>
+        <div className="grid grid-cols-3 gap-1.5">
           {STYLES.map((style) => (
             <button
               key={style.value}
               type="button"
               disabled={disabled}
               onClick={() => onStyle(style.value)}
-              className={`rounded-md px-2 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 ${
+              aria-pressed={state.userStyle === style.value}
+              className={`rounded border px-2 py-1.5 text-xs font-medium transition-colors disabled:opacity-40 ${
                 state.userStyle === style.value
-                  ? 'bg-lime-400 text-pitch-950'
-                  : 'text-slate-400 hover:text-slate-200'
+                  ? 'border-accent bg-accent text-white'
+                  : 'border-line bg-bg text-muted hover:text-ink'
               }`}
             >
               {style.label}
@@ -63,78 +53,62 @@ export function TacticsPanel({
         </div>
       </div>
 
-      <div>
-        <label className="label" htmlFor="formation">
-          Formation
-        </label>
-        <select
-          id="formation"
-          className="field"
-          disabled={disabled}
-          value={state.userFormation}
-          onChange={(e) => onFormation(e.target.value)}
-        >
-          {FORMATIONS.map((formation) => (
-            <option key={formation} value={formation}>
-              {formation}
-            </option>
-          ))}
-        </select>
-      </div>
 
       <div>
         <div className="mb-1.5 flex items-baseline justify-between">
-          <span className="label mb-0">Substitution</span>
-          <span className="text-xs text-slate-400">{state.substitutionsRemaining} left</span>
+          <span className="text-xs text-muted">Substitutions</span>
+          <span className="text-xs text-win">{state.substitutionsRemaining} remaining</span>
         </div>
+        <button
+          type="button"
+          className="w-full rounded bg-accent px-3 py-2 text-xs font-bold tracking-wide text-white uppercase transition-colors hover:bg-accent/85 disabled:cursor-not-allowed disabled:opacity-40"
+          disabled={disabled || state.substitutionsRemaining <= 0}
+          onClick={onOpenSubstitution}
+        >
+          Make Substitution
+        </button>
+      </div>
 
-        <div className="space-y-2">
-          <select
-            className="field"
-            disabled={disabled}
-            value={playerOut}
-            onChange={(e) => setPlayerOut(e.target.value)}
-          >
-            <option value="">Player off…</option>
-            {onPitch.map((player) => (
-              <option key={player.id} value={player.id}>
-                {describe(player)}
-              </option>
-            ))}
-          </select>
-
-          <select
-            className="field"
-            disabled={disabled}
-            value={playerIn}
-            onChange={(e) => setPlayerIn(e.target.value)}
-          >
-            <option value="">Player on…</option>
-            {bench.map((player) => (
-              <option key={player.id} value={player.id}>
-                {describe(player)}
-              </option>
-            ))}
-          </select>
-
-          <button
-            type="button"
-            className="btn-ghost w-full"
-            disabled={!canSub}
-            onClick={() => {
-              onSubstitute(playerOut, playerIn)
-              setPlayerOut('')
-              setPlayerIn('')
-            }}
-          >
-            Make substitution
-          </button>
+      <div>
+        <span className="mb-1.5 block text-xs text-muted">Speed</span>
+        <div className="grid grid-cols-3 gap-1.5">
+          {SPEEDS.map((multiplier) => (
+            <button
+              key={multiplier}
+              type="button"
+              disabled={disabled}
+              onClick={() => onSpeed(multiplier)}
+              aria-pressed={state.speedMultiplier === multiplier}
+              className={`rounded border px-2 py-1.5 text-xs font-semibold transition-colors disabled:opacity-40 ${
+                state.speedMultiplier === multiplier
+                  ? 'border-accent bg-accent text-white'
+                  : 'border-line bg-bg text-muted hover:text-ink'
+              }`}
+            >
+              {multiplier}x
+            </button>
+          ))}
         </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-1.5">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onPause}
+          className="rounded border border-line bg-bg px-2 py-2 text-xs font-semibold transition-colors hover:bg-white/5 disabled:opacity-40"
+        >
+          {paused ? '▶ Resume' : '❙❙ Pause'}
+        </button>
+        <button
+          type="button"
+          disabled={disabled || finishing}
+          onClick={onFinish}
+          className="rounded bg-loss px-2 py-2 text-xs font-semibold text-white transition-colors hover:bg-loss/85 disabled:opacity-40"
+        >
+          {finishing ? 'Ending…' : '⏭ End Match'}
+        </button>
       </div>
     </div>
   )
-}
-
-function describe(player: Player) {
-  return `#${player.shirtNumber} ${player.name} · ${POSITION_LABEL[player.position]} ${player.overall}`
 }

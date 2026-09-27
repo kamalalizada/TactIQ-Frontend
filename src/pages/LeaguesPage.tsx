@@ -2,142 +2,178 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 
-import { leagueApi } from '@/api/endpoints'
+import { seasonApi } from '@/api/endpoints'
 import { Shell } from '@/components/Shell'
-import { EmptyNote, ErrorNote, Spinner } from '@/components/States'
-import { GameMode } from '@/types'
+import { ErrorNote, Spinner } from '@/components/States'
+import { lastLeague } from '@/lib/lastLeague'
+import { Badge } from '@/components/ui/Badge'
+import { Modal } from '@/components/ui/Modal'
+import { CompetitionKind, GameMode, type SeasonSummary } from '@/types'
 
 export function LeaguesPage() {
-  const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const [pendingDelete, setPendingDelete] = useState<SeasonSummary | null>(null)
 
-  const [seasonName, setSeasonName] = useState('')
-  const [gameMode, setGameMode] = useState<GameMode>(GameMode.ManagerMode)
-
-  const leagues = useQuery({ queryKey: ['leagues'], queryFn: leagueApi.list })
-
-  const create = useMutation({
-    mutationFn: () =>
-      leagueApi.create({
-        seasonName: seasonName.trim() || 'New Season',
-        gameMode,
-        userTeamId: null,
-      }),
-    onSuccess: (league) => {
-      queryClient.invalidateQueries({ queryKey: ['leagues'] })
-      navigate(`/leagues/${league.id}`)
-    },
-  })
+  const leagues = useQuery({ queryKey: ['leagues'], queryFn: seasonApi.list })
 
   const remove = useMutation({
-    mutationFn: leagueApi.remove,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['leagues'] }),
+    mutationFn: seasonApi.remove,
+    onSuccess: (_result, deletedId) => {
+      // The sidebar must not keep pointing at a league that is gone.
+      lastLeague.clear(deletedId)
+      queryClient.invalidateQueries({ queryKey: ['leagues'] })
+      setPendingDelete(null)
+    },
   })
 
   return (
     <Shell>
-      <div className="grid gap-6 lg:grid-cols-[1fr_20rem]">
-        <section>
-          <h2 className="mb-4 text-xl font-semibold">Your seasons</h2>
-
-          {leagues.isPending && <Spinner />}
-          {leagues.isError && <ErrorNote error={leagues.error} />}
-
-          {leagues.data?.length === 0 && <EmptyNote>No seasons yet. Create one to kick off.</EmptyNote>}
-
-          <div className="space-y-3">
-            {leagues.data?.map((league) => (
-              <div key={league.id} className="card flex items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <Link to={`/leagues/${league.id}`} className="font-semibold hover:text-lime-400">
-                    {league.seasonName}
-                  </Link>
-                  <p className="mt-0.5 text-xs text-slate-400">
-                    {league.gameMode === GameMode.ManagerMode ? 'Manager Mode' : 'God Mode'} ·{' '}
-                    {league.isFinished
-                      ? 'Season complete'
-                      : `Week ${league.currentWeek} of ${league.totalWeeks}`}
-                  </p>
-                </div>
-
-                <button
-                  type="button"
-                  className="btn-ghost text-xs"
-                  onClick={() => {
-                    if (confirm(`Delete "${league.seasonName}"? This cannot be undone.`)) {
-                      remove.mutate(league.id)
-                    }
-                  }}
-                >
-                  Delete
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <aside>
-          <form
-            className="card space-y-4"
-            onSubmit={(e) => {
-              e.preventDefault()
-              create.mutate()
-            }}
-          >
-            <h2 className="text-lg font-semibold">New season</h2>
-
-            <div>
-              <label className="label" htmlFor="season">
-                Season name
-              </label>
-              <input
-                id="season"
-                className="field"
-                placeholder="Season 2026/27"
-                value={seasonName}
-                onChange={(e) => setSeasonName(e.target.value)}
-              />
-            </div>
-
-            <div>
-              <span className="label">Mode</span>
-              <div className="space-y-2">
-                {[
-                  { value: GameMode.ManagerMode, title: 'Manager Mode', hint: 'Play your own matches live' },
-                  { value: GameMode.GodMode, title: 'God Mode', hint: 'Watch every result instantly' },
-                ].map((option) => (
-                  <label
-                    key={option.value}
-                    className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors ${
-                      gameMode === option.value
-                        ? 'border-lime-400/60 bg-lime-400/10'
-                        : 'border-white/10 hover:bg-white/5'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name="mode"
-                      className="mt-1 accent-lime-400"
-                      checked={gameMode === option.value}
-                      onChange={() => setGameMode(option.value)}
-                    />
-                    <span>
-                      <span className="block text-sm font-medium">{option.title}</span>
-                      <span className="block text-xs text-slate-400">{option.hint}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {create.isError && <ErrorNote error={create.error} />}
-
-            <button type="submit" className="btn-primary w-full" disabled={create.isPending}>
-              {create.isPending ? 'Creating…' : 'Create season'}
-            </button>
-          </form>
-        </aside>
+      <div className="mb-5 flex items-center justify-between gap-4">
+        <h2 className="text-xl font-bold tracking-tight">Mövsümlərim</h2>
+        <Link
+          to="/seasons/new"
+          aria-label="Yeni mövsüm"
+          title="Yeni mövsüm"
+          className="flex size-9 items-center justify-center rounded-lg bg-violet text-xl leading-none font-bold text-white transition-colors hover:bg-violet/85"
+        >
+          +
+        </Link>
       </div>
+
+      {leagues.isPending && <Spinner />}
+      {leagues.isError && <ErrorNote error={leagues.error} />}
+
+      {leagues.data?.length === 0 && (
+        <div className="rounded-lg border border-line bg-panel py-14 text-center">
+          <p className="text-3xl">⚽</p>
+          <p className="mt-3 font-semibold">Hələ mövsümünüz yoxdur</p>
+          <p className="mt-1 text-sm text-muted">Menecer karyeranıza başlamaq üçün ilk mövsümü yaradın.</p>
+          <Link to="/seasons/new" className="btn-primary mt-5">
+            Create your first league
+          </Link>
+        </div>
+      )}
+
+      <div className="space-y-3">
+        {leagues.data?.map((league) => (
+          <LeagueCard key={league.id} league={league} onDelete={() => setPendingDelete(league)} />
+        ))}
+      </div>
+
+      <Modal
+        open={Boolean(pendingDelete)}
+        title="Mövsümü sil"
+        onClose={() => setPendingDelete(null)}
+        footer={
+          <>
+            <button type="button" className="btn-ghost" onClick={() => setPendingDelete(null)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="btn-danger"
+              disabled={remove.isPending}
+              onClick={() => pendingDelete && remove.mutate(pendingDelete.id)}
+            >
+              {remove.isPending ? 'Silinir…' : 'Sil'}
+            </button>
+          </>
+        }
+      >
+        <p className="text-sm">
+          <span className="font-semibold">{pendingDelete?.name}</span> mövsümü və onun bütün matçları silinəcək.
+        </p>
+        <p className="mt-2 text-sm text-loss">Bu əməliyyat geri qaytarılmır.</p>
+        {remove.isError && (
+          <div className="mt-3">
+            <ErrorNote error={remove.error} />
+          </div>
+        )}
+      </Modal>
     </Shell>
+  )
+}
+
+function LeagueCard({ league, onDelete }: { league: SeasonSummary; onDelete: () => void }) {
+  const navigate = useNavigate()
+  const isManager = league.gameMode === GameMode.ManagerMode
+
+  // Progress is measured by the domestic league, the season's backbone.
+  const domestic = league.competitions.find(
+    (competition) => competition.kind === CompetitionKind.League,
+  )
+  const currentWeek = domestic?.currentWeek ?? 0
+  const totalWeeks = domestic?.totalWeeks ?? 0
+  const playedWeeks = Math.max(0, Math.min(currentWeek - 1, totalWeeks))
+  const percent = totalWeeks > 0 ? (playedWeeks / totalWeeks) * 100 : 0
+
+  return (
+    <div className="flex flex-wrap items-center gap-4 rounded-lg border border-line bg-panel p-4">
+      <span
+        aria-hidden
+        className={`flex size-11 shrink-0 items-center justify-center rounded-lg text-lg ${
+          isManager ? 'bg-win/15 text-win' : 'bg-accent/15 text-accent'
+        }`}
+      >
+        {isManager ? '🛡' : '👁'}
+      </span>
+
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <Link to={`/seasons/${league.id}`} className="font-semibold hover:text-accent">
+            {league.name}
+          </Link>
+          <Badge tone={isManager ? 'accent' : 'neutral'}>
+            {isManager ? 'Menecer Rejimi' : 'Tanrı Rejimi'}
+          </Badge>
+          {league.isFinished && <Badge tone="win">Bitdi</Badge>}
+        </div>
+
+        <p className="mt-0.5 text-xs text-muted">
+          {league.userTeamName && (
+            <>
+              <span className="text-accent">{league.userTeamName}</span>
+              <span className="mx-1.5">·</span>
+            </>
+          )}
+          {league.competitions.length} liqa · Həftə {Math.min(currentWeek, totalWeeks)} /{' '}
+          {totalWeeks}
+        </p>
+
+        <div className="mt-2 h-1 max-w-sm overflow-hidden rounded-full bg-bg">
+          <div
+            className={`h-full transition-[width] ${league.isFinished ? 'bg-win' : 'bg-accent'}`}
+            style={{ width: `${percent}%` }}
+          />
+        </div>
+      </div>
+
+      <p className="hidden text-xs text-muted sm:block">
+        Yaradılıb{' '}
+        {new Date(league.createdAt).toLocaleDateString('en-GB', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric',
+        })}
+      </p>
+
+      <div className="flex shrink-0 items-center gap-2">
+        <button
+          type="button"
+          className="btn-primary px-4 py-1.5 text-xs"
+          onClick={() => navigate(`/seasons/${league.id}`)}
+        >
+          Open
+        </button>
+        <button
+          type="button"
+          aria-label={`${league.name} mövsümünü sil`}
+          className="rounded px-2 py-1.5 text-loss transition-colors hover:bg-loss/10"
+          onClick={onDelete}
+        >
+          🗑
+        </button>
+      </div>
+    </div>
   )
 }

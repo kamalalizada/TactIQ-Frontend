@@ -1,38 +1,30 @@
 import { useQuery } from '@tanstack/react-query'
 
-import { leagueApi } from '@/api/endpoints'
+import { seasonApi } from '@/api/endpoints'
 import type { Team } from '@/types'
 
 /**
- * Finds the squad the user manages in whichever league this match belongs to.
- * The match DTO carries no league id, so the owning league is located by
- * scanning the user's manager-mode seasons for a fixture with this id.
+ * Loads the squad the user manages in the given season, which is what the
+ * substitution lists need to know who is on the pitch and who is on the bench.
  */
-export function useManagedSquad(matchId: string): { squad: Team | undefined; isPending: boolean } {
-  const leagues = useQuery({ queryKey: ['leagues'], queryFn: leagueApi.list })
-
-  const managerLeagues = leagues.data?.filter((league) => league.userTeamId) ?? []
-
-  const owner = useQuery({
-    queryKey: ['match-league', matchId, managerLeagues.map((l) => l.id).join(',')],
-    enabled: managerLeagues.length > 0,
-    queryFn: async () => {
-      for (const league of managerLeagues) {
-        const fixtures = await leagueApi.fixtures(league.id)
-        if (fixtures.some((fixture) => fixture.id === matchId)) return league
-      }
-      return null
-    },
+export function useManagedSquad(seasonId: string | undefined): {
+  squad: Team | undefined
+  isPending: boolean
+} {
+  const season = useQuery({
+    queryKey: ['season', seasonId],
+    queryFn: () => seasonApi.get(seasonId!),
+    enabled: Boolean(seasonId),
   })
 
   const teams = useQuery({
-    queryKey: ['teams', owner.data?.id],
-    queryFn: () => leagueApi.teams(owner.data!.id),
-    enabled: Boolean(owner.data?.id),
+    queryKey: ['teams', seasonId],
+    queryFn: () => seasonApi.teams(seasonId!),
+    enabled: Boolean(seasonId),
   })
 
   return {
-    squad: teams.data?.find((team) => team.id === owner.data?.userTeamId),
-    isPending: leagues.isPending || owner.isPending || teams.isPending,
+    squad: teams.data?.find((team) => team.id === season.data?.userTeamId),
+    isPending: season.isPending || teams.isPending,
   }
 }
