@@ -10,10 +10,13 @@ import { LoginPage } from '@/pages/LoginPage'
 import { NewLeaguePage } from '@/pages/NewLeaguePage'
 import { PickTeamPage } from '@/pages/PickTeamPage'
 import { TeamDetailPage } from '@/pages/TeamDetailPage'
+import { CareerPage } from '@/pages/CareerPage'
 import { CupPage } from '@/pages/CupPage'
 import { SquadPage } from '@/pages/SquadPage'
 import { StatisticsPage } from '@/pages/StatisticsPage'
 import { TeamsPage } from '@/pages/TeamsPage'
+import { TransferMarketPage } from '@/pages/TransferMarketPage'
+import { TransferOffersPage } from '@/pages/TransferOffersPage'
 
 // SignalR only matters on this one screen, so it loads with it.
 const LiveMatchPage = lazy(() =>
@@ -63,6 +66,12 @@ export default function App() {
       <Route path="/seasons/:seasonId/squad" element={<SquadPage />} />
       <Route path="/seasons/:seasonId/statistics" element={<StatisticsPage />} />
       <Route path="/seasons/:seasonId/cup" element={<CupPage />} />
+      <Route path="/seasons/:seasonId/career" element={<CareerPage />} />
+      <Route path="/seasons/:seasonId/transfers" element={<TransferMarketPage />} />
+      <Route
+        path="/seasons/:seasonId/transfers/offers"
+        element={<TransferOffersPage />}
+      />
       <Route
         path="/matches/:matchId/live"
         element={

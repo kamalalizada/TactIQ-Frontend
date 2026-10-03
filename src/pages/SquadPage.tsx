@@ -8,27 +8,13 @@ import { Shell } from '@/components/Shell'
 import { EmptyNote, ErrorNote, Spinner } from '@/components/States'
 import { PositionBadge } from '@/components/ui/Badge'
 import { TeamCrest } from '@/components/ui/TeamCrest'
-import { Position, type Player } from '@/types'
+import { FORMATION_SLOTS, fitOf, pickForFormation } from '@/lib/formations'
+import { Position, ROLE_LABELS, type Player, type PlayerRole } from '@/types'
 
 const POSITION_ORDER: Position[] = [Position.GK, Position.DEF, Position.MID, Position.FWD]
 
-/** Mirrors the shapes the backend accepts: defenders-midfielders-forwards. */
-const FORMATIONS: Record<string, Record<Position, number>> = {
-  '4-4-2': { [Position.GK]: 1, [Position.DEF]: 4, [Position.MID]: 4, [Position.FWD]: 2 },
-  '4-3-3': { [Position.GK]: 1, [Position.DEF]: 4, [Position.MID]: 3, [Position.FWD]: 3 },
-  '4-2-3-1': { [Position.GK]: 1, [Position.DEF]: 4, [Position.MID]: 5, [Position.FWD]: 1 },
-  '3-5-2': { [Position.GK]: 1, [Position.DEF]: 3, [Position.MID]: 5, [Position.FWD]: 2 },
-  '5-3-2': { [Position.GK]: 1, [Position.DEF]: 5, [Position.MID]: 3, [Position.FWD]: 2 },
-  '4-5-1': { [Position.GK]: 1, [Position.DEF]: 4, [Position.MID]: 5, [Position.FWD]: 1 },
-  '3-4-3': { [Position.GK]: 1, [Position.DEF]: 3, [Position.MID]: 4, [Position.FWD]: 3 },
-}
-
-const POSITION_NAMES: Record<Position, string> = {
-  [Position.GK]: 'qapıçı',
-  [Position.DEF]: 'müdafiəçi',
-  [Position.MID]: 'yarımmüdafiəçi',
-  [Position.FWD]: 'hücumçu',
-}
+/** The shapes a manager may pick, in the order the picker lists them. */
+const FORMATIONS = Object.keys(FORMATION_SLOTS)
 
 function byPosition(a: Player, b: Player) {
   const byLine = POSITION_ORDER.indexOf(a.position) - POSITION_ORDER.indexOf(b.position)
@@ -61,13 +47,24 @@ export function SquadPage() {
   // Start from what the club is already set up to play.
   useEffect(() => {
     if (!squadTeam || starterIds !== null) return
-    setFormation(squadTeam.formation in FORMATIONS ? squadTeam.formation : '4-4-2')
-    setStarterIds(
-      squadTeam.players
-        .filter((p) => p.isStarter)
-        .sort((a, b) => a.lineupSlot - b.lineupSlot)
-        .map((p) => p.id),
-    )
+
+    const shape = FORMATIONS.includes(squadTeam.formation) ? squadTeam.formation : '4-4-2'
+    setFormation(shape)
+
+    const saved = squadTeam.players
+      .filter((p) => p.isStarter)
+      .sort((a, b) => a.lineupSlot - b.lineupSlot)
+
+    // The saved order is what the shape asks for only when every starter has a
+    // slot and there are eleven of them. A squad seeded before slots existed,
+    // or one left short by injuries, is laid out from scratch instead — the
+    // order is what names each player's job, so a wrong order mislabels them.
+    const ordered =
+      saved.length === 11 && saved.every((p, index) => p.lineupSlot === index + 1)
+        ? saved.map((p) => p.id)
+        : pickForFormation(shape, squadTeam.players)
+
+    setStarterIds(ordered)
   }, [squadTeam, starterIds])
 
   const save = useMutation({
@@ -116,7 +113,13 @@ export function SquadPage() {
 
   const chosen = starterIds ?? []
   const shape = formation ?? '4-4-2'
-  const required = FORMATIONS[shape]
+  const slots = FORMATION_SLOTS[shape] ?? FORMATION_SLOTS['4-4-2']
+
+  /** The job the shape asks of whoever stands in a given shirt. */
+  const slotRole = (playerId: string): PlayerRole | null => {
+    const index = chosen.indexOf(playerId)
+    return index >= 0 && index < slots.length ? slots[index] : null
+  }
 
   const starters = chosen
     .map((id) => squad.players.find((p) => p.id === id))
@@ -124,15 +127,24 @@ export function SquadPage() {
   const bench = squad.players.filter((p) => !chosen.includes(p.id)).sort(byPosition)
   const shown = selected ?? starters[0]
 
-  // What each line still needs before the shape is legal.
-  const shortfall = POSITION_ORDER.map((position) => ({
-    position,
-    picked: starters.filter((p) => p.position === position).length,
-    needed: required[position],
-  })).filter((line) => line.picked !== line.needed)
+  // Anyone filling a job that is not their own; legal, but they play below
+  // their rating, so the manager is told before the match rather than after.
+  const misfits = starters
+    .map((player) => ({ player, role: slotRole(player.id) }))
+    .filter(
+      (entry): entry is { player: Player; role: PlayerRole } =>
+        entry.role !== null && fitOf(entry.player.role, entry.role) !== 'native',
+    )
 
   const unavailable = starters.filter((p) => !p.isAvailable)
-  const canSave = shortfall.length === 0 && unavailable.length === 0 && chosen.length === 11
+  const keepers = starters.filter((p) => p.position === Position.GK).length
+
+  // The shape itself is never refused: a manager short of midfielders may push
+  // a winger inside, and those players already lose part of their rating for
+  // it. What a side cannot do is field the wrong number of men, play someone
+  // who is injured or suspended, or take the field without a goalkeeper.
+  const canSave =
+    chosen.length === 11 && unavailable.length === 0 && keepers === 1
 
   // Swapping is position-for-position, so the shape never breaks mid-edit.
   const swapOut = starters.find((p) => p.id === swapOutId) ?? null
@@ -186,7 +198,15 @@ export function SquadPage() {
         ? swapOut
         : [...starters]
             .filter((p) => p.position === benchPlayer.position)
-            .sort((a, b) => a.overall - b.overall)[0]
+            // Give up the shirt that suits its job least, and among equals the
+            // weakest player, so a single tap does not unseat a specialist.
+            .sort((a, b) => {
+              const roleA = slotRole(a.id)
+              const roleB = slotRole(b.id)
+              const fitA = roleA === null ? 1 : fitOf(a.role, roleA) === 'native' ? 1 : 0
+              const fitB = roleB === null ? 1 : fitOf(b.role, roleB) === 'native' ? 1 : 0
+              return fitA - fitB || a.overall - b.overall
+            })[0]
 
     if (!outgoing) return
 
@@ -199,24 +219,9 @@ export function SquadPage() {
     setFormation(next)
     setSwapOutId(null)
 
-    // Rebuild the eleven around the new shape, keeping the best available.
-    const wanted = FORMATIONS[next]
-    const picked: string[] = []
-
-    for (const position of POSITION_ORDER) {
-      const line = squad.players
-        .filter((p) => p.position === position && p.isAvailable)
-        .sort((a, b) => {
-          // Players already in the side keep their place where possible.
-          const aIn = chosen.includes(a.id) ? 1 : 0
-          const bIn = chosen.includes(b.id) ? 1 : 0
-          return bIn - aIn || b.overall - a.overall
-        })
-
-      picked.push(...line.slice(0, wanted[position]).map((p) => p.id))
-    }
-
-    setStarterIds(picked)
+    // Fill each slot with the player who actually plays that job, so switching
+    // shape puts a right-back at right-back rather than the next best defender.
+    setStarterIds(pickForFormation(next, squad.players, chosen))
   }
 
   return (
@@ -240,7 +245,7 @@ export function SquadPage() {
               onChange={(event) => applyFormation(event.target.value)}
               className="rounded-md border border-line bg-panel px-3 py-2 text-sm text-ink outline-none focus:border-violet"
             >
-              {Object.keys(FORMATIONS).map((option) => (
+              {FORMATIONS.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
@@ -259,11 +264,20 @@ export function SquadPage() {
         </div>
       </header>
 
-      {shortfall.length > 0 && (
+      {keepers !== 1 && (
+        <p className="mb-4 rounded-md border border-loss/30 bg-loss/10 px-3 py-2 text-sm text-loss">
+          İlk 11-də bir qapıçı olmalıdır ({keepers} seçilib).
+        </p>
+      )}
+
+      {misfits.length > 0 && (
         <p className="mb-4 rounded-md border border-draw/30 bg-draw/10 px-3 py-2 text-sm text-draw">
-          {shape} düzülüşü üçün:{' '}
-          {shortfall
-            .map((line) => `${line.needed} ${POSITION_NAMES[line.position]} (${line.picked} seçilib)`)
+          Mövqeyindən kənarda oynayanlar reytinqinin bir hissəsini itirir:{' '}
+          {misfits
+            .map(
+              ({ player, role }) =>
+                `${player.name} (${ROLE_LABELS[player.role]} → ${ROLE_LABELS[role]})`,
+            )
             .join(', ')}
         </p>
       )}
@@ -289,7 +303,12 @@ export function SquadPage() {
 
       <div className="grid gap-5 lg:grid-cols-[1fr_20rem]">
         <section>
-          <PitchView players={starters} selectedId={swapOutId ?? shown?.id} onSelect={tapStarter} />
+          <PitchView
+            players={starters}
+            selectedId={swapOutId ?? shown?.id}
+            onSelect={tapStarter}
+            slotRoleOf={(player) => slotRole(player.id)}
+          />
 
           {swapOut ? (
             <p className="mt-2.5 flex flex-wrap items-center gap-2 rounded-md border border-violet/40 bg-violet/10 px-3 py-2 text-sm">
@@ -317,6 +336,11 @@ export function SquadPage() {
             <Key colour="bg-draw" label="Yorğun" />
             <Key colour="bg-loss" label="Tükənmiş" />
           </div>
+
+          <p className="mt-1.5 text-[0.7rem] text-muted">
+            Mövqe yazısı sarı ya qırmızı olanda oyunçu öz yerində deyil və reytinqinin
+            bir hissəsini itirir.
+          </p>
         </section>
 
         <aside className="space-y-4">
@@ -357,6 +381,12 @@ export function SquadPage() {
                     <span className="w-6 shrink-0 text-xs text-muted">{player.shirtNumber}</span>
                     <PositionBadge position={player.position} />
                     <span className="flex-1 truncate">{player.name}</span>
+                    <RoleTag
+                      role={player.role}
+                      // With someone marked to come off, the tag says how well
+                      // this player would fill that particular job.
+                      fillingSlot={swapOut ? slotRole(swapOut.id) : null}
+                    />
                     <span className="shrink-0 font-bold">{player.overall}</span>
                   </button>
                 </li>
@@ -366,6 +396,34 @@ export function SquadPage() {
         </aside>
       </div>
     </Shell>
+  )
+}
+
+/**
+ * A player's own role, coloured by how well it fits the slot they are being
+ * considered for. Without a slot in mind it simply names the role.
+ */
+function RoleTag({ role, fillingSlot }: { role: PlayerRole; fillingSlot: PlayerRole | null }) {
+  const fit = fillingSlot === null ? 'native' : fitOf(role, fillingSlot)
+
+  const tone =
+    fillingSlot === null || fit === 'native'
+      ? 'border-line text-muted'
+      : fit === 'close'
+        ? 'border-draw/50 text-draw'
+        : 'border-loss/50 text-loss'
+
+  return (
+    <span
+      className={`shrink-0 rounded border px-1 text-[0.6rem] tracking-wide ${tone}`}
+      title={
+        fillingSlot === null || fit === 'native'
+          ? undefined
+          : `Bu yerdə ${ROLE_LABELS[fillingSlot]} oynayacaq`
+      }
+    >
+      {ROLE_LABELS[role]}
+    </span>
   )
 }
 
@@ -395,6 +453,9 @@ function PlayerDetail({ player }: { player: Player }) {
           <p className="truncate font-semibold">{player.name}</p>
           <div className="mt-1 flex items-center gap-2">
             <PositionBadge position={player.position} />
+            <span className="rounded border border-line px-1 text-[0.6rem] tracking-wide text-muted">
+              {ROLE_LABELS[player.role]}
+            </span>
             <span className="text-xs text-muted">
               #{player.shirtNumber} · {player.age} yaş
             </span>

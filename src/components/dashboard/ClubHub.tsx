@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { EmptyNote } from '@/components/States'
 import { PositionBadge } from '@/components/ui/Badge'
 import { TeamCrest } from '@/components/ui/TeamCrest'
-import { Position, type Player, type Team } from '@/types'
+import { Position, ROLE_LABELS, type Player, type Team } from '@/types'
 
 const POSITION_ORDER: Position[] = [Position.GK, Position.DEF, Position.MID, Position.FWD]
 
@@ -76,7 +76,10 @@ function SquadRow({ player }: { player: Player }) {
         <span className="flex items-center gap-1.5">
           <span className="w-5 shrink-0 text-[0.65rem] text-muted">{player.shirtNumber}</span>
           <PositionBadge position={player.position} />
-          <span className="truncate text-xs">{player.name}</span>
+          {/* The table is tight, so the exact role rides on the name's tooltip. */}
+          <span className="truncate text-xs" title={`${player.name} · ${ROLE_LABELS[player.role]}`}>
+            {player.name}
+          </span>
         </span>
       </td>
 

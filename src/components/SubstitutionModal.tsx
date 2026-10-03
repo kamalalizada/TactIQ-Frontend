@@ -3,7 +3,8 @@ import { useState } from 'react'
 import { ErrorNote } from '@/components/States'
 import { PositionBadge } from '@/components/ui/Badge'
 import { Modal } from '@/components/ui/Modal'
-import { Position, type LivePlayer } from '@/types'
+import { fitOf } from '@/lib/formations'
+import { Position, ROLE_LABELS, type LivePlayer } from '@/types'
 
 const POSITION_ORDER: Position[] = [Position.GK, Position.DEF, Position.MID, Position.FWD]
 
@@ -154,6 +155,7 @@ function Column({
                   <span className="w-7 shrink-0 text-xs text-muted">#{player.shirtNumber}</span>
                   <PositionBadge position={player.position} />
                   <span className="flex-1 truncate">{player.name}</span>
+                  <RoleTag player={player} />
 
                   {/* Stamina is what decides a substitution, so it leads the numbers. */}
                   <StaminaPip value={player.stamina} />
@@ -165,6 +167,35 @@ function Column({
         </ul>
       )}
     </div>
+  )
+}
+
+/**
+ * The job a player is doing tonight. Where it is not their own it is marked,
+ * because that player is already rated below their ability — which is often
+ * the reason to make the change.
+ */
+function RoleTag({ player }: { player: LivePlayer }) {
+  const fit = player.onPitch ? fitOf(player.role, player.playedRole) : 'native'
+
+  const tone =
+    fit === 'native'
+      ? 'border-line text-muted'
+      : fit === 'close'
+        ? 'border-draw/50 text-draw'
+        : 'border-loss/50 text-loss'
+
+  return (
+    <span
+      className={`shrink-0 rounded border px-1 text-[0.6rem] tracking-wide ${tone}`}
+      title={
+        fit === 'native'
+          ? undefined
+          : `Əsl mövqeyi ${ROLE_LABELS[player.role]}, bu oyunda ${ROLE_LABELS[player.playedRole]} oynayır`
+      }
+    >
+      {ROLE_LABELS[player.onPitch ? player.playedRole : player.role]}
+    </span>
   )
 }
 

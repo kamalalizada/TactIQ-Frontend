@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+﻿import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link, useParams } from 'react-router-dom'
 
 import { competitionApi, cupApi, seasonApi } from '@/api/endpoints'
@@ -55,6 +55,11 @@ export function CupPage() {
     onSuccess: refresh,
   })
 
+  const playAll = useMutation({
+    mutationFn: (includeUserMatch: boolean = false) => cupApi.playAll(seasonId, includeUserMatch),
+    onSuccess: refresh,
+  })
+
   if (cup.isPending) {
     return (
       <Shell>
@@ -79,10 +84,10 @@ export function CupPage() {
       <Shell>
         <h2 className="mb-5 text-xl font-bold tracking-tight">Knockout Stage</h2>
         <div className="card mx-auto max-w-md space-y-4 text-center">
-          <p className="text-4xl">🏆</p>
-          <p className="font-semibold">Kubok hələ başlamayıb</p>
+          <p className="text-4xl">ðŸ†</p>
+          <p className="font-semibold">Kubok hÉ™lÉ™ baÅŸlamayÄ±b</p>
           <p className="text-sm text-muted">
-            Liqa mövsümü bitdikdən sonra pley-off mərhələsi başlayacaq.
+            Liqa mÃ¶vsÃ¼mÃ¼ bitdikdÉ™n sonra pley-off mÉ™rhÉ™lÉ™si baÅŸlayacaq.
           </p>
 
           {start.isError && <ErrorNote error={start.error} />}
@@ -92,9 +97,9 @@ export function CupPage() {
             className="btn-primary w-full"
             disabled={!seasonFinished || start.isPending}
             onClick={() => start.mutate()}
-            title={seasonFinished ? undefined : 'Əvvəlcə liqa mövsümünü bitirin'}
+            title={seasonFinished ? undefined : 'ÆvvÉ™lcÉ™ liqa mÃ¶vsÃ¼mÃ¼nÃ¼ bitirin'}
           >
-            {start.isPending ? 'Başladılır…' : 'Kuboku başlat'}
+            {start.isPending ? 'BaÅŸladÄ±lÄ±râ€¦' : 'Kuboku baÅŸlat'}
           </button>
         </div>
       </Shell>
@@ -130,7 +135,7 @@ export function CupPage() {
 
         {bracket.finished ? (
           <div className="flex items-center gap-3 rounded-lg border border-draw/40 bg-draw/10 px-4 py-2.5">
-            <span className="text-2xl">🏆</span>
+            <span className="text-2xl">ðŸ†</span>
             <div>
               <p className="text-[0.65rem] tracking-wide text-muted uppercase">Cup champion</p>
               <p className="font-bold text-draw">{bracket.winnerTeamName}</p>
@@ -139,18 +144,17 @@ export function CupPage() {
         ) : pendingMatchId ? (
           <div className="flex items-center gap-3">
             <Link to={`/matches/${pendingMatchId}/live`} className="btn-primary">
-              ⚽ Matçını oyna
+              âš½ MatÃ§Ä±nÄ± oyna
             </Link>
             <button
               type="button"
               className="btn-ghost relative group"
-              disabled={playRound.isPending}
-              onClick={() => playRound.mutate(true)}
+              disabled={playAll.isPending} onClick={() => playAll.mutate(true)}
             >
-              {playRound.isPending ? 'Gözləyin...' : 'Hamısını simulyasiya et'}
-              {playRound.isPending && (
+              {playAll.isPending ? 'Gözləyin...' : 'Hamısını simulyasiya et'}
+              {playAll.isPending && (
                 <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 w-max text-[0.65rem] text-muted animate-pulse">
-                  48 matç hesablanır...
+                  Bütün kubok hesablanır...
                 </span>
               )}
             </button>
@@ -163,11 +167,11 @@ export function CupPage() {
               disabled={playRound.isPending}
               onClick={() => playRound.mutate(false)}
             >
-              {playRound.isPending ? 'Oynanılır (gözləyin)...' : 'Raundu simulyasiya et'}
+              {playRound.isPending ? 'OynanÄ±lÄ±r (gÃ¶zlÉ™yin)...' : 'Raundu simulyasiya et'}
             </button>
             {playRound.isPending && (
               <span className="text-[0.65rem] text-muted animate-pulse">
-                Bütün raund (çoxlu matç) simulyasiya edilir...
+                Bütün raund (Ã§oxlu matÃ§) simulyasiya edilir...
               </span>
             )}
           </div>
@@ -178,7 +182,7 @@ export function CupPage() {
       {pendingMatchId && pendingUserMatch && (
         <div className="mb-5 rounded-lg border border-win/50 bg-win/5 p-4">
           <p className="mb-2 text-[0.65rem] font-bold tracking-wide text-win uppercase">
-            ⚽ Sənin matçın — {bracket.currentRound !== null ? CUP_ROUND_LABELS[bracket.currentRound] : ''}
+            âš½ SÉ™nin matÃ§Ä±n â€” {bracket.currentRound !== null ? CUP_ROUND_LABELS[bracket.currentRound] : ''}
           </p>
           <div className="flex items-center gap-3">
             <TeamCrest name={pendingUserMatch.homeTeamName} size="sm" />
@@ -194,7 +198,7 @@ export function CupPage() {
             </Link>
           </div>
           <p className="mt-1.5 text-xs text-muted">
-            Raundun digər oyunları sən öz matçını oynayıb bitirən kimi simulyasiya olunacaq.
+            Raundun digÉ™r oyunlarÄ± sÉ™n Ã¶z matÃ§Ä±nÄ± oynayÄ±b bitirÉ™n kimi simulyasiya olunacaq.
           </p>
         </div>
       )}
@@ -240,7 +244,7 @@ function Groups({ groups }: { groups: CupGroup[] }) {
                         <span className="truncate">{row.teamName}</span>
                         {row.qualified && (
                           <span aria-label="Qualified" className="shrink-0 text-win">
-                            ▲
+                            â–²
                           </span>
                         )}
                       </span>
@@ -348,7 +352,7 @@ function Side({
       </span>
       {isWinner && (
         <span aria-label="Advances" className="shrink-0 text-xs text-win">
-          ▲
+          â–²
         </span>
       )}
       <span className={`w-5 shrink-0 text-right font-bold ${isWinner ? 'text-win' : ''}`}>
@@ -357,4 +361,9 @@ function Side({
     </div>
   )
 }
+
+
+
+
+
 

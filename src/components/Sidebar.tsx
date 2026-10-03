@@ -16,8 +16,10 @@ const ITEMS: Item[] = [
   { label: 'Mövsümlər', icon: '⌂', to: () => '/' },
   { label: 'Komandalar', icon: '⛉', to: (id) => `/seasons/${id}/teams`, needsSeason: true },
   { label: 'Heyət', icon: '☰', to: (id) => `/seasons/${id}/squad`, needsSeason: true },
+  { label: 'Transfer', icon: '⇄', to: (id) => `/seasons/${id}/transfers`, needsSeason: true },
   { label: 'Statistika', icon: '◫', to: (id) => `/seasons/${id}/statistics`, needsSeason: true },
   { label: 'Kubok', icon: '♛', to: (id) => `/seasons/${id}/cup`, needsSeason: true },
+  { label: 'Karyera', icon: '✦', to: (id) => `/seasons/${id}/career`, needsSeason: true },
 ]
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {

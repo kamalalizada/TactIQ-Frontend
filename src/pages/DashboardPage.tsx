@@ -11,8 +11,10 @@ import {
   MatchInspectModal,
   QuickStatsRow,
   SeasonBanner,
+  TransferCard,
   WeekProgressBar,
 } from '@/components/dashboard'
+import { RolloverModal } from '@/components/career/RolloverModal'
 import { Shell } from '@/components/Shell'
 import { ErrorNote, Spinner } from '@/components/States'
 import { useDashboard } from '@/hooks/useDashboard'
@@ -28,6 +30,12 @@ export function DashboardPage() {
     cup,
     statistics,
     teams,
+    transferWindow,
+    transferOffers,
+    career,
+    nextSeason,
+    rollover,
+    setRollover,
     data,
     domestic,
     leagues,
@@ -124,6 +132,9 @@ export function DashboardPage() {
           champion={champion}
           cupStarted={Boolean(cup.data?.started)}
           seasonId={seasonId}
+          canAdvance={career.data?.canAdvance}
+          onNextSeason={() => nextSeason.mutate()}
+          advancing={nextSeason.isPending}
         />
       )}
 
@@ -159,11 +170,21 @@ export function DashboardPage() {
             <ClubHub team={userTeam} seasonId={seasonId} />
           )}
 
+          {data.userTeamId && (
+            <TransferCard
+              state={transferWindow.data}
+              offers={transferOffers.data}
+              seasonId={seasonId}
+            />
+          )}
+
           <KnockoutMini bracket={cup.data} seasonId={seasonId} seasonFinished={data.isFinished} />
         </div>
       </div>
 
       <MatchInspectModal match={inspected} onClose={() => setInspected(null)} />
+
+      <RolloverModal summary={rollover} onClose={() => setRollover(null)} />
     </Shell>
   )
 }

@@ -2,8 +2,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 
-import { competitionApi, cupApi, seasonApi } from '@/api/endpoints'
-import { CompetitionKind, GameMode, type Match } from '@/types'
+import { careerApi, competitionApi, cupApi, seasonApi, transferApi } from '@/api/endpoints'
+import { CompetitionKind, GameMode, type Match, type SeasonRollover } from '@/types'
 
 export function useDashboard() {
   const { seasonId = '' } = useParams()
@@ -11,6 +11,8 @@ export function useDashboard() {
 
   const [viewedWeek, setViewedWeek] = useState<number | null>(null)
   const [inspected, setInspected] = useState<Match | null>(null)
+  // The summary of the year just closed, shown once when it is.
+  const [rollover, setRollover] = useState<SeasonRollover | null>(null)
   // Null means "follow my own club"; set it to browse another league.
   const [pickedLeagueId, setPickedLeagueId] = useState<string | null>(null)
 
@@ -27,6 +29,36 @@ export function useDashboard() {
   const cup = useQuery({
     queryKey: ['cup', seasonId],
     queryFn: () => cupApi.bracket(seasonId),
+  })
+
+  // Only a managed club has a market to shop in, so these are allowed to fail
+  // quietly in God Mode rather than failing the dashboard with them.
+  const transferWindow = useQuery({
+    queryKey: ['transfer-window', seasonId],
+    queryFn: () => transferApi.window(seasonId),
+    retry: false,
+  })
+
+  const transferOffers = useQuery({
+    queryKey: ['transfer-offers', seasonId],
+    queryFn: () => transferApi.offers(seasonId),
+    retry: false,
+  })
+
+  const career = useQuery({
+    queryKey: ['career', seasonId],
+    queryFn: () => careerApi.get(seasonId),
+    retry: false,
+  })
+
+  // Closing a year changes every squad, table and fixture in the save, so the
+  // whole cache goes rather than trying to name what moved.
+  const nextSeason = useMutation({
+    mutationFn: () => careerApi.nextSeason(seasonId),
+    onSuccess: (summary) => {
+      setRollover(summary)
+      queryClient.invalidateQueries()
+    },
   })
 
   const leagues = season.data?.competitions.filter(
@@ -112,6 +144,12 @@ export function useDashboard() {
     cup,
     statistics,
     teams,
+    transferWindow,
+    transferOffers,
+    career,
+    nextSeason,
+    rollover,
+    setRollover,
 
     data,
     domestic,
