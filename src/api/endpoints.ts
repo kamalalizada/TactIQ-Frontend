@@ -13,6 +13,7 @@ import type {
   MarketPlayer,
   MarketQuery,
   Match,
+  SearchResult,
   SeasonRollover,
   SeasonSummary,
   SetLineupRequest,
@@ -48,6 +49,11 @@ export const seasonApi = {
   /** Picks the managed club; only allowed before the season kicks off. */
   setUserTeam: (seasonId: string, teamId: string) =>
     api.patch<SeasonSummary>(`/seasons/${seasonId}/user-team`, { teamId }),
+  /** Finds clubs and players by name, for the header search box. */
+  search: (seasonId: string, query: string) =>
+    api.get<SearchResult>(
+      `/seasons/${seasonId}/search?q=${encodeURIComponent(query)}`,
+    ),
   /** Season-wide by default; pass a competition to narrow it to one league. */
   statistics: (seasonId: string, competitionId?: string) =>
     api.get<LeagueStatistics>(

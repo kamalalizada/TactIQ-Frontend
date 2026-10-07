@@ -1,5 +1,7 @@
 import { useState, type ReactNode } from 'react'
 
+import { NotificationBell } from '@/components/NotificationBell'
+import { SearchBox } from '@/components/SearchBox'
 import { Sidebar } from '@/components/Sidebar'
 
 export function Shell({
@@ -44,29 +46,10 @@ export function Shell({
             ☰
           </button>
 
-          <label className="relative min-w-0 flex-1 sm:max-w-sm">
-            <span className="sr-only">Axtarış</span>
-            <span
-              aria-hidden
-              className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-muted"
-            >
-              ⌕
-            </span>
-            <input
-              type="search"
-              placeholder="Komanda və ya oyunçu axtar"
-              className="w-full rounded-lg border border-line bg-panel py-1.5 pr-3 pl-8 text-sm outline-none placeholder:text-muted/60 focus:border-violet"
-            />
-          </label>
+          <SearchBox />
 
           <div className="ml-auto flex items-center gap-2">
-            <button
-              type="button"
-              aria-label="Bildirişlər"
-              className="rounded-md border border-line px-2 py-1 text-sm text-muted transition-colors hover:text-ink"
-            >
-              ◎
-            </button>
+            <NotificationBell />
           </div>
         </header>
 

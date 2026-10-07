@@ -1,4 +1,7 @@
-import { fitOf, type Fit } from '@/lib/formations'
+import { useDraggable, useDroppable } from '@dnd-kit/core'
+
+import { PITCH_TEXT_EDGE, RatingStar, RoleChip } from '@/components/ui/Badge'
+import { fitOf } from '@/lib/formations'
 import { PlayerRole, ROLE_LABELS, type Player } from '@/types'
 
 /**
@@ -41,7 +44,7 @@ const SPOTS: Record<PlayerRole, { depth: number; lane: number }> = {
 }
 
 /** How wide a group of players standing on the same spot is fanned out. */
-const FAN = 17
+const FAN = 19
 
 /**
  * Where every player stands. Anyone sharing a spot — the two centre-backs of a
@@ -101,6 +104,8 @@ export function PitchView({
   onSelect,
   selectedId,
   slotRoleOf,
+  formation,
+  draggable = false,
 }: {
   players: Player[]
   onSelect?: (player: Player) => void
@@ -111,6 +116,14 @@ export function PitchView({
    * manager can see a misfit before kick-off rather than after it.
    */
   slotRoleOf?: (player: Player) => PlayerRole | null
+  /** The shape's name, printed in the corner of the pitch. */
+  formation?: string
+  /**
+   * Lets each shirt be picked up and dropped on another, or on the bench. The
+   * page owns what a drop means; this only names each shirt `starter:<id>`.
+   * Needs a DndContext above it.
+   */
+  draggable?: boolean
 }) {
   // A shirt is drawn where its job belongs. Without a shape to read it from,
   // the player's own role stands in — which is what a bench sheet wants.
@@ -118,10 +131,8 @@ export function PitchView({
 
   return (
     <div
-      className="relative aspect-[3/4] w-full overflow-hidden rounded-xl border border-line sm:aspect-[4/3]"
-      style={{
-        background: 'linear-gradient(170deg, #1b5e34 0%, #0e3a20 100%)',
-      }}
+      className="relative mx-auto aspect-[72/109] w-full max-w-[42rem] overflow-hidden rounded-xl shadow-xl"
+      style={{ background: 'radial-gradient(ellipse at 50% 45%, #8fca55 0%, #74b443 55%, #5c9a33 100%)' }}
     >
       <PitchMarkings />
 
@@ -134,52 +145,104 @@ export function PitchView({
           bottom={bottom}
           selected={player.id === selectedId}
           onSelect={onSelect}
+          draggable={draggable}
         />
       ))}
+
+      {formation && (
+        <span
+          className={`absolute right-3 bottom-2 font-pitch text-[2rem] leading-none font-bold text-white ${PITCH_TEXT_EDGE}`}
+        >
+          {formation}
+        </span>
+      )}
     </div>
   )
 }
 
 function PitchMarkings() {
+  // Drawn to a real pitch's proportions, 68 m by 105 m inside a 2 m margin, so
+  // the centre circle stays round on the tall, narrow box that holds it.
   return (
     <svg
       aria-hidden
-      viewBox="0 0 100 100"
+      viewBox="0 0 72 109"
       preserveAspectRatio="none"
-      className="absolute inset-0 size-full text-white/25"
+      className="absolute inset-0 size-full text-white/85"
     >
       {/* Mown stripes */}
-      {Array.from({ length: 6 }).map((_, index) => (
+      {Array.from({ length: 24 }).map((_, index) => (
         <rect
           key={index}
           x={0}
-          y={(index * 100) / 6}
-          width={100}
-          height={100 / 6}
-          fill={index % 2 === 0 ? 'rgba(255,255,255,0.03)' : 'transparent'}
+          y={(index * 109) / 24}
+          width={72}
+          height={109 / 24}
+          fill={index % 2 === 0 ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}
         />
       ))}
 
-      <g stroke="currentColor" strokeWidth="0.4" fill="none" vectorEffect="non-scaling-stroke">
-        <rect x="2" y="2" width="96" height="96" />
-        <line x1="2" y1="50" x2="98" y2="50" />
-        <circle cx="50" cy="50" r="12" />
-        <circle cx="50" cy="50" r="0.8" fill="currentColor" stroke="none" />
-        {/* Penalty areas */}
-        <rect x="26" y="2" width="48" height="16" />
-        <rect x="38" y="2" width="24" height="7" />
-        <rect x="26" y="82" width="48" height="16" />
-        <rect x="38" y="91" width="24" height="7" />
+      <g stroke="currentColor" strokeWidth="2.5" fill="none" vectorEffect="non-scaling-stroke">
+        <rect x="2" y="2" width="68" height="105" vectorEffect="non-scaling-stroke" />
+        <line x1="2" y1="54.5" x2="70" y2="54.5" vectorEffect="non-scaling-stroke" />
+        <circle cx="36" cy="54.5" r="9.15" vectorEffect="non-scaling-stroke" />
+        <circle cx="36" cy="54.5" r="0.6" fill="currentColor" stroke="none" />
+
+        {/* Top end: penalty area, goal area, spot and arc */}
+        <rect x="15.84" y="2" width="40.32" height="16.5" vectorEffect="non-scaling-stroke" />
+        <rect x="26.84" y="2" width="18.32" height="5.5" vectorEffect="non-scaling-stroke" />
+        <circle cx="36" cy="13" r="0.5" fill="currentColor" stroke="none" />
+        <path d="M 28.69 18.5 A 9.15 9.15 0 0 0 43.31 18.5" vectorEffect="non-scaling-stroke" />
+
+        {/* Bottom end */}
+        <rect x="15.84" y="90.5" width="40.32" height="16.5" vectorEffect="non-scaling-stroke" />
+        <rect x="26.84" y="101.5" width="18.32" height="5.5" vectorEffect="non-scaling-stroke" />
+        <circle cx="36" cy="96" r="0.5" fill="currentColor" stroke="none" />
+        <path d="M 28.69 90.5 A 9.15 9.15 0 0 1 43.31 90.5" vectorEffect="non-scaling-stroke" />
       </g>
     </svg>
   )
 }
 
-/** How a shirt is outlined when its occupant does not play that job. */
-const FIT_RING: Record<Fit, string> = {
-  native: 'border-white/70',
-  close: 'border-draw',
-  poor: 'border-loss',
+/** The id a starter's shirt carries while it is dragged or dropped on. */
+export const starterDragId = (playerId: string) => `starter:${playerId}`
+
+/**
+ * What a shirt shows, as a football game's team sheet prints it: a starred
+ * rating whose star carries fitness, the job, and the surname in white.
+ * Shared by the shirt on the pitch and the copy that follows the pointer.
+ */
+export function TokenFace({
+  player,
+  role,
+  mark = null,
+}: {
+  player: Player
+  role: PlayerRole
+  /** An outline round the rating and job: solid for the picked player, dashed for a drop target. */
+  mark?: 'selected' | 'target' | null
+}) {
+  const outline =
+    mark === 'selected'
+      ? 'bg-white/20 outline-2 outline-white outline-solid'
+      : mark === 'target'
+        ? 'bg-white/10 outline-2 outline-white outline-dashed'
+        : 'group-hover:bg-white/10'
+
+  return (
+    <>
+      <span className={`flex flex-col items-center rounded px-1 pt-0.5 pb-1 transition-colors ${outline}`}>
+        <RatingStar overall={player.overall} condition={player.condition} large />
+        <RoleChip role={role} large />
+      </span>
+
+      <span
+        className={`max-w-[8rem] truncate font-pitch text-[1.2rem] leading-tight font-bold tracking-wide text-white uppercase ${PITCH_TEXT_EDGE}`}
+      >
+        {lastName(player.name)}
+      </span>
+    </>
+  )
 }
 
 function PlayerToken({
@@ -189,6 +252,7 @@ function PlayerToken({
   bottom,
   selected,
   onSelect,
+  draggable,
 }: {
   player: Player
   slotRole: PlayerRole
@@ -196,68 +260,30 @@ function PlayerToken({
   bottom: number
   selected: boolean
   onSelect?: (player: Player) => void
+  draggable: boolean
 }) {
-  const tone =
-    player.condition >= 80 ? 'bg-win' : player.condition >= 55 ? 'bg-draw' : 'bg-loss'
+  const id = starterDragId(player.id)
+  const drag = useDraggable({ id, data: { player }, disabled: !draggable })
+  const drop = useDroppable({ id, data: { player }, disabled: !draggable })
 
-  // Out of position costs a player part of their rating, so the badge says so.
-  const fit = fitOf(player.role, slotRole)
+  // Out of position costs a player part of their rating; the hover text says so.
+  const native = fitOf(player.role, slotRole) === 'native'
 
-  const content = (
-    <>
-      <span
-        className={`relative flex size-11 items-center justify-center rounded-full border-2 text-sm font-black shadow-lg transition-transform sm:size-12 ${
-          selected
-            ? 'scale-110 border-violet bg-violet text-white'
-            : `${FIT_RING[fit]} bg-bg/90 text-ink`
-        } ${player.isAvailable ? '' : 'opacity-50'}`}
-      >
-        {player.shirtNumber}
-
-        {/* Fitness ring sits on the badge so it reads at a glance. */}
-        <span
-          aria-hidden
-          className={`absolute -right-0.5 -bottom-0.5 size-3 rounded-full border-2 border-bg ${tone}`}
-        />
-      </span>
-
-      <span className="mt-1 max-w-[6.5rem] truncate rounded bg-black/55 px-1.5 py-0.5 text-[0.65rem] font-medium text-white">
-        {player.name}
-      </span>
-
-      <span className="flex items-center gap-1 text-[0.6rem] font-bold text-white/80">
-        <span
-          className={`rounded px-1 text-[0.55rem] tracking-wide ${
-            fit === 'native'
-              ? 'bg-black/45 text-white/90'
-              : fit === 'close'
-                ? 'bg-draw/85 text-black'
-                : 'bg-loss/85 text-white'
-          }`}
-        >
-          {ROLE_LABELS[slotRole]}
-        </span>
-        {player.overall}
-      </span>
-    </>
-  )
+  const mark = drop.isOver && !drag.isDragging ? 'target' : selected ? 'selected' : null
 
   const style = { left: `${left}%`, bottom: `${bottom}%` }
-  const className =
-    'absolute flex -translate-x-1/2 translate-y-1/2 flex-col items-center'
+  const className = `group absolute flex -translate-x-1/2 translate-y-1/2 flex-col items-center px-1 py-1 ${
+    drag.isDragging ? 'opacity-30' : player.isAvailable ? '' : 'opacity-50'
+  }`
+
+  const title = native
+    ? `${player.name} · ${ROLE_LABELS[slotRole]} · ${player.overall} OVR · kondisiya ${player.condition}`
+    : `${player.name} · əsl mövqeyi ${ROLE_LABELS[player.role]}, burada ${ROLE_LABELS[slotRole]} oynayır · ${player.overall} OVR`
 
   if (!onSelect) {
     return (
-      <span
-        className={className}
-        style={style}
-        title={
-          fit === 'native'
-            ? player.name
-            : `${player.name} · əsl mövqeyi ${ROLE_LABELS[player.role]}`
-        }
-      >
-        {content}
+      <span className={className} style={style} title={title}>
+        <TokenFace player={player} role={slotRole} mark={mark} />
       </span>
     )
   }
@@ -265,16 +291,27 @@ function PlayerToken({
   return (
     <button
       type="button"
+      ref={(node) => {
+        drag.setNodeRef(node)
+        drop.setNodeRef(node)
+      }}
+      {...drag.attributes}
+      {...drag.listeners}
+      data-pick
       onClick={() => onSelect(player)}
-      title={
-        fit === 'native'
-          ? `${player.name} · ${ROLE_LABELS[slotRole]} · ${player.overall} OVR · kondisiya ${player.condition}`
-          : `${player.name} · əsl mövqeyi ${ROLE_LABELS[player.role]}, burada ${ROLE_LABELS[slotRole]} oynayır · ${player.overall} OVR`
-      }
-      className={`${className} cursor-pointer`}
+      title={title}
+      className={`${className} ${draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
       style={style}
     >
-      {content}
+      <TokenFace player={player} role={slotRole} mark={mark} />
     </button>
   )
+}
+
+/** What a team sheet prints: the surname, or the whole name if it is one word. */
+function lastName(name: string) {
+  const parts = name.trim().split(/\s+/)
+  // "Vini Jr." is known by the whole thing, not by its suffix.
+  if (parts.length < 2 || /^(jr|sr)\.?$/i.test(parts[parts.length - 1])) return name
+  return parts.slice(1).join(' ')
 }

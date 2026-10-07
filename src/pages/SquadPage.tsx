@@ -1,20 +1,55 @@
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  closestCenter,
+  pointerWithin,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type CollisionDetection,
+  type DragEndEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { seasonApi } from '@/api/endpoints'
-import { PitchView } from '@/components/PitchView'
+import { PitchView, TokenFace } from '@/components/PitchView'
 import { Shell } from '@/components/Shell'
 import { EmptyNote, ErrorNote, Spinner } from '@/components/States'
-import { PositionBadge } from '@/components/ui/Badge'
+import { PositionBadge, RatingStar, RoleChip } from '@/components/ui/Badge'
 import { TeamCrest } from '@/components/ui/TeamCrest'
 import { FORMATION_SLOTS, fitOf, pickForFormation } from '@/lib/formations'
+import { substitute, swapStarters } from '@/lib/lineup'
 import { Position, ROLE_LABELS, type Player, type PlayerRole } from '@/types'
 
 const POSITION_ORDER: Position[] = [Position.GK, Position.DEF, Position.MID, Position.FWD]
 
 /** The shapes a manager may pick, in the order the picker lists them. */
 const FORMATIONS = Object.keys(FORMATION_SLOTS)
+
+/** The id a bench player carries while it is dragged or dropped on. */
+const benchDragId = (playerId: string) => `bench:${playerId}`
+
+/** Splits a drag id back into where the player was and who they are. */
+function parseDragId(id: string | number): { from: 'starter' | 'bench'; playerId: string } | null {
+  const [from, ...rest] = String(id).split(':')
+  if (from !== 'starter' && from !== 'bench') return null
+  return { from, playerId: rest.join(':') }
+}
+
+/**
+ * Drops land on whatever is under the pointer, so a shirt let go between two
+ * others goes nowhere rather than to the nearer one. A keyboard drag has no
+ * pointer, so it falls back to the nearest target.
+ */
+const dropTarget: CollisionDetection = (args) =>
+  args.pointerCoordinates ? pointerWithin(args) : closestCenter(args)
 
 function byPosition(a: Player, b: Player) {
   const byLine = POSITION_ORDER.indexOf(a.position) - POSITION_ORDER.indexOf(b.position)
@@ -31,6 +66,42 @@ export function SquadPage() {
   const [starterIds, setStarterIds] = useState<string[] | null>(null)
   // The player marked to come off, waiting for a replacement to be picked.
   const [swapOutId, setSwapOutId] = useState<string | null>(null)
+  // Whoever is being dragged, drawn under the pointer until they are dropped.
+  const [dragging, setDragging] = useState<{ player: Player; role: PlayerRole } | null>(null)
+
+  // A small move or a short hold before a drag starts, so a click still selects
+  // and a finger can still scroll the bench.
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 6 } }),
+    useSensor(KeyboardSensor),
+  )
+
+  // A press anywhere but on a player, or Escape, lets go of whoever is picked.
+  // Players carry data-pick so a press on one — or the start of a drag — is
+  // left to their own handlers.
+  useEffect(() => {
+    const clear = () => {
+      setSwapOutId(null)
+      setSelected(null)
+    }
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest('[data-pick]')) return
+      clear()
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') clear()
+    }
+
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [])
 
   const season = useQuery({
     queryKey: ['season', seasonId],
@@ -127,15 +198,6 @@ export function SquadPage() {
   const bench = squad.players.filter((p) => !chosen.includes(p.id)).sort(byPosition)
   const shown = selected ?? starters[0]
 
-  // Anyone filling a job that is not their own; legal, but they play below
-  // their rating, so the manager is told before the match rather than after.
-  const misfits = starters
-    .map((player) => ({ player, role: slotRole(player.id) }))
-    .filter(
-      (entry): entry is { player: Player; role: PlayerRole } =>
-        entry.role !== null && fitOf(entry.player.role, entry.role) !== 'native',
-    )
-
   const unavailable = starters.filter((p) => !p.isAvailable)
   const keepers = starters.filter((p) => p.position === Position.GK).length
 
@@ -146,13 +208,13 @@ export function SquadPage() {
   const canSave =
     chosen.length === 11 && unavailable.length === 0 && keepers === 1
 
-  // Swapping is position-for-position, so the shape never breaks mid-edit.
+  // Anyone may go anywhere: the slot names the job, so the shape never breaks,
+  // and a player away from their own role simply plays below their rating.
   const swapOut = starters.find((p) => p.id === swapOutId) ?? null
 
   /**
    * Tapping the pitch: the first tap marks a player, the second either swaps
-   * the two around — which is how you move someone left or right within a
-   * line — or clears the mark if it was the same player.
+   * the two around or clears the mark if it was the same player.
    */
   const tapStarter = (player: Player) => {
     setSelected(player)
@@ -167,23 +229,7 @@ export function SquadPage() {
       return
     }
 
-    // Only within a line: swapping a defender with a striker would leave the
-    // shape reading 3-4-3 while claiming to be 4-4-2.
-    if (swapOut.position !== player.position) {
-      setSwapOutId(player.id)
-      return
-    }
-
-    const from = chosen.indexOf(swapOut.id)
-    const to = chosen.indexOf(player.id)
-
-    if (from >= 0 && to >= 0) {
-      const next = [...chosen]
-      next[from] = player.id
-      next[to] = swapOut.id
-      setStarterIds(next)
-    }
-
+    setStarterIds(swapStarters(chosen, swapOut.id, player.id))
     setSwapOutId(null)
   }
 
@@ -193,9 +239,8 @@ export function SquadPage() {
    * so a single tap still works.
    */
   const bringOn = (benchPlayer: Player) => {
-    const outgoing =
-      swapOut && swapOut.position === benchPlayer.position
-        ? swapOut
+    const outgoing = swapOut
+      ? swapOut
         : [...starters]
             .filter((p) => p.position === benchPlayer.position)
             // Give up the shirt that suits its job least, and among equals the
@@ -210,9 +255,49 @@ export function SquadPage() {
 
     if (!outgoing) return
 
-    setStarterIds(chosen.map((id) => (id === outgoing.id ? benchPlayer.id : id)))
+    setStarterIds(substitute(chosen, outgoing.id, benchPlayer.id))
     setSelected(benchPlayer)
     setSwapOutId(null)
+  }
+
+  const startDrag = ({ active }: DragStartEvent) => {
+    const source = parseDragId(active.id)
+    const player = squad.players.find((p) => p.id === source?.playerId)
+    if (!source || !player) return
+
+    setDragging({
+      player,
+      role: (source.from === 'starter' ? slotRole(player.id) : null) ?? player.role,
+    })
+  }
+
+  /**
+   * What a drop means depends on where the player came from and where they
+   * landed: two starters trade places, a starter and a substitute trade
+   * between pitch and bench, and two substitutes leave things as they were.
+   */
+  const endDrag = ({ active, over }: DragEndEvent) => {
+    setDragging(null)
+    if (!over || active.id === over.id) return
+
+    const source = parseDragId(active.id)
+    const target = parseDragId(over.id)
+    if (!source || !target) return
+
+    let next = chosen
+    if (source.from === 'starter' && target.from === 'starter') {
+      next = swapStarters(chosen, source.playerId, target.playerId)
+    } else if (source.from === 'bench' && target.from === 'starter') {
+      next = substitute(chosen, target.playerId, source.playerId)
+    } else if (source.from === 'starter' && target.from === 'bench') {
+      next = substitute(chosen, source.playerId, target.playerId)
+    }
+
+    if (next === chosen) return
+
+    setStarterIds(next)
+    setSwapOutId(null)
+    setSelected(squad.players.find((p) => p.id === source.playerId) ?? null)
   }
 
   const applyFormation = (next: string) => {
@@ -257,37 +342,19 @@ export function SquadPage() {
             type="button"
             onClick={() => save.mutate()}
             disabled={!canSave || save.isPending}
+            title={
+              keepers !== 1
+                ? `İlk 11-də bir qapıçı olmalıdır (${keepers} seçilib)`
+                : unavailable.length > 0
+                  ? `Oynaya bilməyən oyunçular ilk 11-dədir: ${unavailable.map((p) => p.name).join(', ')}`
+                  : undefined
+            }
             className="rounded-lg bg-violet px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-violet/85 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {save.isPending ? 'Yadda saxlanılır…' : 'Heyəti Yadda Saxla'}
           </button>
         </div>
       </header>
-
-      {keepers !== 1 && (
-        <p className="mb-4 rounded-md border border-loss/30 bg-loss/10 px-3 py-2 text-sm text-loss">
-          İlk 11-də bir qapıçı olmalıdır ({keepers} seçilib).
-        </p>
-      )}
-
-      {misfits.length > 0 && (
-        <p className="mb-4 rounded-md border border-draw/30 bg-draw/10 px-3 py-2 text-sm text-draw">
-          Mövqeyindən kənarda oynayanlar reytinqinin bir hissəsini itirir:{' '}
-          {misfits
-            .map(
-              ({ player, role }) =>
-                `${player.name} (${ROLE_LABELS[player.role]} → ${ROLE_LABELS[role]})`,
-            )
-            .join(', ')}
-        </p>
-      )}
-
-      {unavailable.length > 0 && (
-        <p className="mb-4 rounded-md border border-loss/30 bg-loss/10 px-3 py-2 text-sm text-loss">
-          Oynaya bilməyən oyunçular ilk 11-dədir:{' '}
-          {unavailable.map((p) => p.name).join(', ')}
-        </p>
-      )}
 
       {save.isError && (
         <div className="mb-4">
@@ -301,136 +368,159 @@ export function SquadPage() {
         </p>
       )}
 
-      <div className="grid gap-5 lg:grid-cols-[1fr_20rem]">
-        <section>
-          <PitchView
-            players={starters}
-            selectedId={swapOutId ?? shown?.id}
-            onSelect={tapStarter}
-            slotRoleOf={(player) => slotRole(player.id)}
-          />
-
-          {swapOut ? (
-            <p className="mt-2.5 flex flex-wrap items-center gap-2 rounded-md border border-violet/40 bg-violet/10 px-3 py-2 text-sm">
-              <span className="font-semibold">{swapOut.name}</span>
-              <span className="text-muted">
-                seçildi — yerini dəyişmək üçün meydandan, əvəz etmək üçün ehtiyatdan seçin
-              </span>
-              <button
-                type="button"
-                onClick={() => setSwapOutId(null)}
-                className="ml-auto text-xs text-muted underline hover:text-ink"
-              >
-                imtina
-              </button>
-            </p>
-          ) : (
-            <p className="mt-2.5 text-[0.7rem] text-muted">
-              Meydandakı oyunçuya basın: sonra başqasına basıb yerlərini dəyişə, ya da
-              ehtiyatdan əvəz seçə bilərsiniz.
-            </p>
-          )}
-
-          <div className="mt-2.5 flex flex-wrap gap-4 text-[0.7rem] text-muted">
-            <Key colour="bg-win" label="Forması yerində" />
-            <Key colour="bg-draw" label="Yorğun" />
-            <Key colour="bg-loss" label="Tükənmiş" />
-          </div>
-
-          <p className="mt-1.5 text-[0.7rem] text-muted">
-            Mövqe yazısı sarı ya qırmızı olanda oyunçu öz yerində deyil və reytinqinin
-            bir hissəsini itirir.
-          </p>
-        </section>
-
-        <aside className="space-y-4">
-          {shown && <PlayerDetail player={shown} />}
-
-          <section className="glass-card">
+      <DndContext
+        sensors={sensors}
+        collisionDetection={dropTarget}
+        onDragStart={startDrag}
+        onDragEnd={endDrag}
+        onDragCancel={() => setDragging(null)}
+      >
+        <div className="grid gap-5 lg:justify-center lg:grid-cols-[16rem_minmax(0,42rem)_18rem]">
+          <section className="order-2 lg:order-none">
             <h3 className="mb-1 text-sm font-semibold">Ehtiyat ({bench.length})</h3>
             <p className="mb-2.5 text-[0.7rem] text-muted">
               {swapOut
                 ? `${swapOut.name} əvəzinə girəcək oyunçunu seçin.`
-                : 'Oyunçuya basanda eyni mövqedən ən zəifi ilə yer dəyişir.'}
+                : 'Oyunçunu meydana sürükləyin, ya da basın: eyni mövqedən ən zəifi ilə yer dəyişir.'}
             </p>
 
-            <ul className="scroll-list max-h-80 space-y-1 pr-1">
+            <ul className="scroll-list max-h-[56rem] space-y-0.5 rounded-xl bg-linear-to-b from-[#1a2a44] to-[#0c1524] p-1.5 shadow-lg">
               {bench.map((player) => (
                 <li key={player.id}>
-                  <button
-                    type="button"
-                    onClick={() => bringOn(player)}
-                    disabled={!player.isAvailable || Boolean(swapOut && swapOut.position !== player.position)}
-                    title={
-                      !player.isAvailable
-                        ? 'Bu oyunçu oynaya bilməz'
-                        : swapOut && swapOut.position !== player.position
-                          ? `${swapOut.name} ilə eyni mövqedə deyil`
-                          : `${player.name} oyuna girsin`
-                    }
-                    className={`flex w-full items-center gap-2 rounded-md border px-2.5 py-2 text-left text-sm transition-colors ${
-                      player.id === shown?.id
-                        ? 'border-violet bg-violet/10'
-                        : 'border-line hover:bg-white/5'
-                    } ${
-                      player.isAvailable && (!swapOut || swapOut.position === player.position)
-                        ? ''
-                        : 'cursor-not-allowed opacity-40'
-                    }`}
-                  >
-                    <span className="w-6 shrink-0 text-xs text-muted">{player.shirtNumber}</span>
-                    <PositionBadge position={player.position} />
-                    <span className="flex-1 truncate">{player.name}</span>
-                    <RoleTag
-                      role={player.role}
-                      // With someone marked to come off, the tag says how well
-                      // this player would fill that particular job.
-                      fillingSlot={swapOut ? slotRole(swapOut.id) : null}
-                    />
-                    <span className="shrink-0 font-bold">{player.overall}</span>
-                  </button>
+                  <BenchRow
+                    player={player}
+                    shown={player.id === selected?.id}
+                    swapOutName={swapOut?.name ?? null}
+                    onPick={bringOn}
+                  />
                 </li>
               ))}
             </ul>
           </section>
-        </aside>
-      </div>
+
+          <section>
+            <PitchView
+              players={starters}
+              selectedId={swapOutId ?? selected?.id}
+              onSelect={tapStarter}
+              slotRoleOf={(player) => slotRole(player.id)}
+              formation={shape}
+              draggable
+            />
+
+            {swapOut ? (
+              <p className="mt-2.5 flex flex-wrap items-center gap-2 rounded-md border border-violet/40 bg-violet/10 px-3 py-2 text-sm">
+                <span className="font-semibold">{swapOut.name}</span>
+                <span className="text-muted">
+                  seçildi — yerini dəyişmək üçün meydandan, əvəz etmək üçün ehtiyatdan seçin
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSwapOutId(null)}
+                  className="ml-auto text-xs text-muted underline hover:text-ink"
+                >
+                  imtina
+                </button>
+              </p>
+            ) : (
+              <p className="mt-2.5 text-[0.7rem] text-muted">
+                Oyunçunu sürükləyib başqasının üstünə buraxın: meydanda yerlərini dəyişir,
+                ehtiyatla isə əvəz olunur. Basıb seçmək də işləyir.
+              </p>
+            )}
+
+            <div className="mt-2.5 flex flex-wrap gap-4 text-[0.7rem] text-muted">
+              <Key colour="text-[#ffb347]" label="Forması yerində" />
+              <Key colour="text-[#d6d6d6]" label="Yorğun" />
+              <Key colour="text-loss" label="Tükənmiş" />
+            </div>
+          </section>
+
+          <aside className="order-3 lg:order-none">{shown && <PlayerDetail player={shown} />}</aside>
+        </div>
+
+        <DragOverlay dropAnimation={null}>
+          {dragging && (
+            <div className="flex cursor-grabbing flex-col items-center drop-shadow-xl">
+              <TokenFace player={dragging.player} role={dragging.role} mark="selected" />
+            </div>
+          )}
+        </DragOverlay>
+      </DndContext>
     </Shell>
   )
 }
 
 /**
- * A player's own role, coloured by how well it fits the slot they are being
- * considered for. Without a slot in mind it simply names the role.
+ * A substitute on the bench sheet. Tapping brings them on; they can also be
+ * dragged onto a shirt on the pitch, or have a starter dropped on them.
  */
-function RoleTag({ role, fillingSlot }: { role: PlayerRole; fillingSlot: PlayerRole | null }) {
-  const fit = fillingSlot === null ? 'native' : fitOf(role, fillingSlot)
-
-  const tone =
-    fillingSlot === null || fit === 'native'
-      ? 'border-line text-muted'
-      : fit === 'close'
-        ? 'border-draw/50 text-draw'
-        : 'border-loss/50 text-loss'
+function BenchRow({
+  player,
+  shown,
+  swapOutName,
+  onPick,
+}: {
+  player: Player
+  shown: boolean
+  swapOutName: string | null
+  onPick: (player: Player) => void
+}) {
+  const id = benchDragId(player.id)
+  // Someone injured or suspended can neither come on nor be swapped in.
+  const drag = useDraggable({ id, data: { player }, disabled: !player.isAvailable })
+  const drop = useDroppable({ id, data: { player }, disabled: !player.isAvailable })
 
   return (
-    <span
-      className={`shrink-0 rounded border px-1 text-[0.6rem] tracking-wide ${tone}`}
+    <button
+      type="button"
+      ref={(node) => {
+        drag.setNodeRef(node)
+        drop.setNodeRef(node)
+      }}
+      {...drag.attributes}
+      {...drag.listeners}
+      data-pick
+      onClick={() => onPick(player)}
+      disabled={!player.isAvailable}
       title={
-        fillingSlot === null || fit === 'native'
-          ? undefined
-          : `Bu yerdə ${ROLE_LABELS[fillingSlot]} oynayacaq`
+        !player.isAvailable
+          ? 'Bu oyunçu oynaya bilməz'
+          : swapOutName
+            ? `${player.name}, ${swapOutName} əvəzinə girsin`
+            : `${player.name} oyuna girsin`
       }
+      className={`flex w-full items-center gap-2.5 rounded-md px-2 py-1 text-left transition-colors ${
+        drop.isOver && !drag.isDragging
+          ? 'bg-white/10 outline-2 outline-white outline-dashed'
+          : shown
+            ? 'bg-white/15 outline-2 outline-white/80 outline-solid'
+            : 'hover:bg-white/5'
+      } ${
+        !player.isAvailable
+          ? 'cursor-not-allowed opacity-40'
+          : drag.isDragging
+            ? 'opacity-30'
+            : 'cursor-grab active:cursor-grabbing'
+      }`}
     >
-      {ROLE_LABELS[role]}
-    </span>
+      <span className="min-w-0 flex-1 truncate text-right font-pitch text-[1.15rem] leading-tight font-bold tracking-wide text-white uppercase">
+        {player.name}
+      </span>
+      <span className="flex w-12 shrink-0 flex-col items-start">
+        <RatingStar overall={player.overall} condition={player.condition} />
+        <RoleChip role={player.role} />
+      </span>
+    </button>
   )
 }
 
 function Key({ colour, label }: { colour: string; label: string }) {
   return (
     <span className="flex items-center gap-1.5">
-      <span aria-hidden className={`inline-block size-2.5 rounded-full ${colour}`} />
+      <span aria-hidden className={`text-sm leading-none ${colour}`}>
+        ★
+      </span>
       {label}
     </span>
   )

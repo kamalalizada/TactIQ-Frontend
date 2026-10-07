@@ -29,18 +29,18 @@ export type PlayerRole = (typeof PlayerRole)[keyof typeof PlayerRole]
 
 /** The short label football uses for each role, as it is printed on a shirt. */
 export const ROLE_LABELS: Record<PlayerRole, string> = {
-  [PlayerRole.GK]: 'QAP',
-  [PlayerRole.LB]: 'SOL MÜD',
-  [PlayerRole.CB]: 'MRK MÜD',
-  [PlayerRole.RB]: 'SAĞ MÜD',
-  [PlayerRole.CDM]: 'DAY YRM',
-  [PlayerRole.CM]: 'MRK YRM',
-  [PlayerRole.CAM]: 'HÜC YRM',
-  [PlayerRole.LM]: 'SOL YRM',
-  [PlayerRole.RM]: 'SAĞ YRM',
-  [PlayerRole.LW]: 'SOL KNT',
-  [PlayerRole.ST]: 'HÜC',
-  [PlayerRole.RW]: 'SAĞ KNT',
+  [PlayerRole.GK]: 'GK',
+  [PlayerRole.LB]: 'LB',
+  [PlayerRole.CB]: 'CB',
+  [PlayerRole.RB]: 'RB',
+  [PlayerRole.CDM]: 'CDM',
+  [PlayerRole.CM]: 'CM',
+  [PlayerRole.CAM]: 'CAM',
+  [PlayerRole.LM]: 'LM',
+  [PlayerRole.RM]: 'RM',
+  [PlayerRole.LW]: 'LW',
+  [PlayerRole.ST]: 'ST',
+  [PlayerRole.RW]: 'RW',
 }
 
 export const TacticalStyle = { Defensive: 0, Balanced: 1, Attacking: 2 } as const
@@ -557,4 +557,33 @@ export interface Career {
   userTeamName: string | null
   titlesWon: number
   history: SeasonRecord[]
+}
+
+/** A club the search turned up. */
+export interface TeamHit {
+  id: string
+  name: string
+  country: string
+  logoUrl: string | null
+  teamOverall: number
+}
+
+/** A player the search turned up, with the club he plays for. */
+export interface PlayerHit {
+  id: string
+  name: string
+  position: Position
+  role: PlayerRole
+  age: number
+  overall: number
+  teamId: string
+  teamName: string
+  teamLogoUrl: string | null
+  /** True when he plays for the club the manager runs. */
+  isMine: boolean
+}
+
+export interface SearchResult {
+  teams: TeamHit[]
+  players: PlayerHit[]
 }

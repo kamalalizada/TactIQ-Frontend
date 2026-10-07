@@ -13,13 +13,17 @@
   --color-draw: #ffb800;
   --color-loss: #ff4757;
   --color-accent: #3b82f6;
-  --color-violet: #7c5cff;
+  /* Kept under its old name; the highlight is a deeper blue than the accent. */
+  --color-violet: #2563eb;
 
   /* Position colours, used on badges and player cards. */
   --color-pos-gk: #ffb800;
   --color-pos-def: #3b82f6;
   --color-pos-mid: #00d66f;
   --color-pos-fwd: #ff4757;
+
+  /* The narrow, heavy face a football game prints its team sheet in. */
+  --font-pitch: 'Barlow Condensed', 'Arial Narrow', ui-sans-serif, sans-serif;
 }
 
 @layer base {
