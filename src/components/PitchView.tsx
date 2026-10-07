@@ -1,153 +1,77 @@
 import { useDraggable, useDroppable } from '@dnd-kit/core'
+import type { Ref } from 'react'
 
 import { PITCH_TEXT_EDGE, RatingStar, RoleChip } from '@/components/ui/Badge'
-import { fitOf } from '@/lib/formations'
+import { fitOf, ratingAs } from '@/lib/formations'
+import { PITCH_DROP_ID, roleAt, type Spot } from '@/lib/pitch'
 import { PlayerRole, ROLE_LABELS, type Player } from '@/types'
 
 /**
  * The starting eleven laid out on a pitch, the way a football game shows it.
  *
- * Each player stands where their role belongs rather than wherever they happen
- * to sit in the array: a left-back on the left touchline, a right winger on the
- * right, the centre-backs in the middle. So a 4-3-3 reads as a 4-3-3 and a
- * 4-4-2 as a 4-4-2, and a manager can see at a glance that a side has no
- * right-back before the match rather than after it.
+ * Each player stands on the spot they were placed on, and the spot decides the
+ * job: a centre-back carried into the goalmouth is drawn — and rated — as the
+ * keeper, and a central midfielder nudged back becomes a holding one.
  */
-
-/**
- * Where each role stands: how far up the pitch from the goal line, and how far
- * across from the left touchline.
- *
- * Both come from the job a shirt does, not from the line its occupant happens
- * to belong to. That is what separates a 4-2-3-1 from a 4-5-1 — both field five
- * across the middle, but one holds two of them deep and pushes a playmaker on;
- * banding by line alone would draw the two identically. It is also what keeps a
- * forward filling a holding role at the back of midfield instead of leaving him
- * drawn up front where his own line would put him.
- */
-const SPOTS: Record<PlayerRole, { depth: number; lane: number }> = {
-  [PlayerRole.GK]: { depth: 8, lane: 50 },
-
-  [PlayerRole.LB]: { depth: 28, lane: 12 },
-  [PlayerRole.CB]: { depth: 24, lane: 50 },
-  [PlayerRole.RB]: { depth: 28, lane: 88 },
-
-  [PlayerRole.CDM]: { depth: 42, lane: 50 },
-  [PlayerRole.LM]: { depth: 52, lane: 15 },
-  [PlayerRole.CM]: { depth: 52, lane: 50 },
-  [PlayerRole.RM]: { depth: 52, lane: 85 },
-  [PlayerRole.CAM]: { depth: 64, lane: 50 },
-
-  [PlayerRole.LW]: { depth: 78, lane: 18 },
-  [PlayerRole.ST]: { depth: 84, lane: 50 },
-  [PlayerRole.RW]: { depth: 78, lane: 82 },
-}
-
-/** How wide a group of players standing on the same spot is fanned out. */
-const FAN = 19
-
-/**
- * Where every player stands. Anyone sharing a spot — the two centre-backs of a
- * back four, the pair of holders in a 4-2-3-1 — is fanned out either side of
- * it, so they sit alongside each other rather than on top of one another.
- */
-function place(
-  players: Player[],
-  roleOf: (player: Player) => PlayerRole,
-): { player: Player; left: number; bottom: number }[] {
-  const bySpot = new Map<string, Player[]>()
-
-  // Sorted by spot so each row reads left to right across the pitch.
-  const ordered = [...players].sort((a, b) => {
-    const left = SPOTS[roleOf(a)] ?? SPOTS[PlayerRole.CM]
-    const right = SPOTS[roleOf(b)] ?? SPOTS[PlayerRole.CM]
-    return left.depth - right.depth || left.lane - right.lane
-  })
-
-  for (const player of ordered) {
-    const spot = SPOTS[roleOf(player)] ?? SPOTS[PlayerRole.CM]
-    const key = `${spot.depth}:${spot.lane}`
-    const group = bySpot.get(key)
-
-    if (group) {
-      group.push(player)
-    } else {
-      bySpot.set(key, [player])
-    }
-  }
-
-  const placed: { player: Player; left: number; bottom: number }[] = []
-
-  for (const group of bySpot.values()) {
-    const spot = SPOTS[roleOf(group[0])] ?? SPOTS[PlayerRole.CM]
-    const spread = Math.min(FAN * (group.length - 1), 58)
-    const start = spot.lane - spread / 2
-
-    group.forEach((player, index) => {
-      const left =
-        group.length === 1 ? spot.lane : start + (spread / (group.length - 1)) * index
-
-      // Keep everyone inside the touchlines however crowded the spot is.
-      placed.push({
-        player,
-        left: Math.min(92, Math.max(8, left)),
-        bottom: spot.depth,
-      })
-    })
-  }
-
-  return placed
-}
-
 export function PitchView({
   players,
+  spots,
   onSelect,
   selectedId,
-  slotRoleOf,
   formation,
   draggable = false,
+  showZones = false,
+  pitchRef,
 }: {
   players: Player[]
+  /** Where each starter stands; anyone without a spot is not drawn. */
+  spots: Record<string, Spot>
   onSelect?: (player: Player) => void
   selectedId?: string | null
-  /**
-   * The job the chosen shape asks of a given player. Passing it draws each
-   * shirt where the formation puts it and marks anyone out of position, so a
-   * manager can see a misfit before kick-off rather than after it.
-   */
-  slotRoleOf?: (player: Player) => PlayerRole | null
   /** The shape's name, printed in the corner of the pitch. */
   formation?: string
   /**
-   * Lets each shirt be picked up and dropped on another, or on the bench. The
-   * page owns what a drop means; this only names each shirt `starter:<id>`.
-   * Needs a DndContext above it.
+   * Lets each shirt be picked up and dropped on another, on open grass, or on
+   * the bench. The page owns what a drop means; this names each shirt
+   * `starter:<id>` and the grass itself `pitch`. Needs a DndContext above it.
    */
   draggable?: boolean
+  /** Draws where each job begins and ends, while a shirt is being moved. */
+  showZones?: boolean
+  /** The pitch's own element, so the page can turn a drop point into a spot. */
+  pitchRef?: Ref<HTMLDivElement>
 }) {
-  // A shirt is drawn where its job belongs. Without a shape to read it from,
-  // the player's own role stands in — which is what a bench sheet wants.
-  const roleOf = (player: Player) => slotRoleOf?.(player) ?? player.role
+  const grass = useDroppable({ id: PITCH_DROP_ID, disabled: !draggable })
 
   return (
     <div
+      ref={(node) => {
+        grass.setNodeRef(node)
+        if (typeof pitchRef === 'function') pitchRef(node)
+        else if (pitchRef) pitchRef.current = node
+      }}
       className="relative mx-auto aspect-[72/109] w-full max-w-[42rem] overflow-hidden rounded-xl shadow-xl"
       style={{ background: 'radial-gradient(ellipse at 50% 45%, #8fca55 0%, #74b443 55%, #5c9a33 100%)' }}
     >
       <PitchMarkings />
+      {showZones && <ZoneGuides />}
 
-      {place(players, roleOf).map(({ player, left, bottom }) => (
-        <PlayerToken
-          key={player.id}
-          player={player}
-          slotRole={roleOf(player)}
-          left={left}
-          bottom={bottom}
-          selected={player.id === selectedId}
-          onSelect={onSelect}
-          draggable={draggable}
-        />
-      ))}
+      {players.map((player) => {
+        const spot = spots[player.id]
+        if (!spot) return null
+
+        return (
+          <PlayerToken
+            key={player.id}
+            player={player}
+            role={roleAt(spot)}
+            spot={spot}
+            selected={player.id === selectedId}
+            onSelect={onSelect}
+            draggable={draggable}
+          />
+        )
+      })}
 
       {formation && (
         <span
@@ -157,6 +81,81 @@ export function PitchView({
         </span>
       )}
     </div>
+  )
+}
+
+/**
+ * Where each job begins and ends, drawn faintly over the grass. The lines and
+ * names follow the same bands `roleAt` reads, so a shirt dropped inside a
+ * named area takes that name.
+ */
+function ZoneGuides() {
+  // Spots measure y up from the side's own goal line; the drawing measures down.
+  const line = (x1: number, y1: number, x2: number, y2: number) => (
+    <line
+      x1={x1}
+      y1={100 - y1}
+      x2={x2}
+      y2={100 - y2}
+      vectorEffect="non-scaling-stroke"
+    />
+  )
+
+  const labels: { role: PlayerRole; x: number; y: number }[] = [
+    { role: PlayerRole.GK, x: 50, y: 6 },
+    { role: PlayerRole.LB, x: 14, y: 24 },
+    { role: PlayerRole.CB, x: 50, y: 24 },
+    { role: PlayerRole.RB, x: 86, y: 24 },
+    { role: PlayerRole.CDM, x: 50, y: 40.5 },
+    { role: PlayerRole.LM, x: 12, y: 51.5 },
+    { role: PlayerRole.CM, x: 50, y: 52 },
+    { role: PlayerRole.RM, x: 88, y: 51.5 },
+    { role: PlayerRole.CAM, x: 50, y: 63 },
+    { role: PlayerRole.LW, x: 15, y: 84 },
+    { role: PlayerRole.ST, x: 50, y: 84 },
+    { role: PlayerRole.RW, x: 85, y: 84 },
+  ]
+
+  return (
+    <>
+      <svg
+        aria-hidden
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        className="pointer-events-none absolute inset-0 size-full"
+      >
+        <g stroke="rgb(255 255 255 / 0.55)" strokeWidth="1.5" strokeDasharray="6 5" fill="none">
+          {/* Goalmouth */}
+          {line(25, 0, 25, 13)}
+          {line(75, 0, 75, 13)}
+          {line(25, 13, 75, 13)}
+          {/* Back line: full-backs either side of the centre-backs */}
+          {line(28, 13, 28, 35)}
+          {line(72, 13, 72, 35)}
+          {line(0, 35, 100, 35)}
+          {/* Midfield: wide either side, holding / central / attacking down the middle */}
+          {line(25, 35, 25, 68)}
+          {line(75, 35, 75, 68)}
+          {line(25, 46, 75, 46)}
+          {line(25, 58, 75, 58)}
+          {line(0, 68, 100, 68)}
+          {/* Attack: wingers either side of the centre-forward */}
+          {line(30, 68, 30, 100)}
+          {line(70, 68, 70, 100)}
+        </g>
+      </svg>
+
+      {labels.map(({ role, x, y }) => (
+        <span
+          key={role}
+          aria-hidden
+          className="pointer-events-none absolute -translate-x-1/2 translate-y-1/2 font-pitch text-sm font-bold tracking-wider text-white/60"
+          style={{ left: `${x}%`, bottom: `${y}%` }}
+        >
+          {ROLE_LABELS[role]}
+        </span>
+      ))}
+    </>
   )
 }
 
@@ -209,8 +208,10 @@ export const starterDragId = (playerId: string) => `starter:${playerId}`
 
 /**
  * What a shirt shows, as a football game's team sheet prints it: a starred
- * rating whose star carries fitness, the job, and the surname in white.
- * Shared by the shirt on the pitch and the copy that follows the pointer.
+ * rating whose star carries fitness, the job, and the surname in white. The
+ * rating is the one the player brings to that job, so a centre-back in goal
+ * reads far below his own. Shared by the shirt on the pitch and the copy that
+ * follows the pointer.
  */
 export function TokenFace({
   player,
@@ -232,7 +233,7 @@ export function TokenFace({
   return (
     <>
       <span className={`flex flex-col items-center rounded px-1 pt-0.5 pb-1 transition-colors ${outline}`}>
-        <RatingStar overall={player.overall} condition={player.condition} large />
+        <RatingStar overall={ratingAs(player, role)} condition={player.condition} large />
         <RoleChip role={role} large />
       </span>
 
@@ -247,17 +248,15 @@ export function TokenFace({
 
 function PlayerToken({
   player,
-  slotRole,
-  left,
-  bottom,
+  role,
+  spot,
   selected,
   onSelect,
   draggable,
 }: {
   player: Player
-  slotRole: PlayerRole
-  left: number
-  bottom: number
+  role: PlayerRole
+  spot: Spot
   selected: boolean
   onSelect?: (player: Player) => void
   draggable: boolean
@@ -267,23 +266,24 @@ function PlayerToken({
   const drop = useDroppable({ id, data: { player }, disabled: !draggable })
 
   // Out of position costs a player part of their rating; the hover text says so.
-  const native = fitOf(player.role, slotRole) === 'native'
+  const native = fitOf(player.role, role) === 'native'
 
   const mark = drop.isOver && !drag.isDragging ? 'target' : selected ? 'selected' : null
 
-  const style = { left: `${left}%`, bottom: `${bottom}%` }
+  // The shirt's centre sits on its spot.
+  const style = { left: `${spot.x}%`, bottom: `${spot.y}%` }
   const className = `group absolute flex -translate-x-1/2 translate-y-1/2 flex-col items-center px-1 py-1 ${
     drag.isDragging ? 'opacity-30' : player.isAvailable ? '' : 'opacity-50'
   }`
 
   const title = native
-    ? `${player.name} · ${ROLE_LABELS[slotRole]} · ${player.overall} OVR · kondisiya ${player.condition}`
-    : `${player.name} · əsl mövqeyi ${ROLE_LABELS[player.role]}, burada ${ROLE_LABELS[slotRole]} oynayır · ${player.overall} OVR`
+    ? `${player.name} · ${ROLE_LABELS[role]} · ${player.overall} OVR · kondisiya ${player.condition}`
+    : `${player.name} · əsl mövqeyi ${ROLE_LABELS[player.role]} (${player.overall}), burada ${ROLE_LABELS[role]} oynayır · ${ratingAs(player, role)} OVR`
 
   if (!onSelect) {
     return (
       <span className={className} style={style} title={title}>
-        <TokenFace player={player} role={slotRole} mark={mark} />
+        <TokenFace player={player} role={role} mark={mark} />
       </span>
     )
   }
@@ -303,7 +303,7 @@ function PlayerToken({
       className={`${className} ${draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
       style={style}
     >
-      <TokenFace player={player} role={slotRole} mark={mark} />
+      <TokenFace player={player} role={role} mark={mark} />
     </button>
   )
 }

@@ -10,12 +10,15 @@ import {
   useDroppable,
   useSensor,
   useSensors,
+  type Active,
   type CollisionDetection,
   type DragEndEvent,
+  type DragMoveEvent,
   type DragStartEvent,
+  type Over,
 } from '@dnd-kit/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
 import { seasonApi } from '@/api/endpoints'
@@ -24,14 +27,26 @@ import { Shell } from '@/components/Shell'
 import { EmptyNote, ErrorNote, Spinner } from '@/components/States'
 import { PositionBadge, RatingStar, RoleChip } from '@/components/ui/Badge'
 import { TeamCrest } from '@/components/ui/TeamCrest'
-import { FORMATION_SLOTS, fitOf, pickForFormation } from '@/lib/formations'
-import { substitute, swapStarters } from '@/lib/lineup'
+import { FORMATION_SLOTS, fitOf, lineOf, pickForFormation, ratingAs } from '@/lib/formations'
+import { inPitchOrder, moveTo, substitute, swapSpots, type Spots } from '@/lib/lineup'
+import {
+  PITCH_DROP_ID,
+  clampSpot,
+  lineupProblem,
+  presetSpots,
+  roleAt,
+  shapeLabel,
+  type Spot,
+} from '@/lib/pitch'
 import { Position, ROLE_LABELS, type Player, type PlayerRole } from '@/types'
 
 const POSITION_ORDER: Position[] = [Position.GK, Position.DEF, Position.MID, Position.FWD]
 
 /** The shapes a manager may pick, in the order the picker lists them. */
 const FORMATIONS = Object.keys(FORMATION_SLOTS)
+
+/** How long a refused drop explains itself before the usual hint returns. */
+const NOTICE_MS = 3500
 
 /** The id a bench player carries while it is dragged or dropped on. */
 const benchDragId = (playerId: string) => `bench:${playerId}`
@@ -44,16 +59,30 @@ function parseDragId(id: string | number): { from: 'starter' | 'bench'; playerId
 }
 
 /**
- * Drops land on whatever is under the pointer, so a shirt let go between two
- * others goes nowhere rather than to the nearer one. A keyboard drag has no
- * pointer, so it falls back to the nearest target.
+ * Drops land on whatever is under the pointer, and a shirt beats the grass it
+ * stands on, so letting go on a team-mate swaps the two while letting go on
+ * open grass moves the player there. A keyboard drag has no pointer, so it
+ * falls back to the nearest target.
  */
-const dropTarget: CollisionDetection = (args) =>
-  args.pointerCoordinates ? pointerWithin(args) : closestCenter(args)
+const dropTarget: CollisionDetection = (args) => {
+  const hits = args.pointerCoordinates ? pointerWithin(args) : closestCenter(args)
+  const shirt = hits.find((hit) => hit.id !== PITCH_DROP_ID)
+  return shirt ? [shirt] : hits
+}
 
 function byPosition(a: Player, b: Player) {
   const byLine = POSITION_ORDER.indexOf(a.position) - POSITION_ORDER.indexOf(b.position)
   return byLine !== 0 ? byLine : a.shirtNumber - b.shirtNumber
+}
+
+const rolesOf = (spots: Spots) => Object.values(spots).map(roleAt)
+
+/** What letting go would do: the line-up it leaves, the dragged player's job in it, and any rule it breaks. */
+interface DropOutcome {
+  next: Spots
+  role: PlayerRole
+  problem: string | null
+  playerId: string
 }
 
 export function SquadPage() {
@@ -61,13 +90,24 @@ export function SquadPage() {
   const queryClient = useQueryClient()
 
   const [selected, setSelected] = useState<Player | null>(null)
+  // The preset shape last picked, which the backend keeps alongside the spots.
   const [formation, setFormation] = useState<string | null>(null)
-  // Null until the squad loads; after that it is the line-up being edited.
-  const [starterIds, setStarterIds] = useState<string[] | null>(null)
+  // Null until the squad loads; after that, where each starter stands.
+  const [spots, setSpots] = useState<Spots | null>(null)
   // The player marked to come off, waiting for a replacement to be picked.
   const [swapOutId, setSwapOutId] = useState<string | null>(null)
   // Whoever is being dragged, drawn under the pointer until they are dropped.
-  const [dragging, setDragging] = useState<{ player: Player; role: PlayerRole } | null>(null)
+  const [dragging, setDragging] = useState<{
+    player: Player
+    from: 'starter' | 'bench'
+    role: PlayerRole
+  } | null>(null)
+  // What letting go right now would do, so the dragged shirt can show it.
+  const [preview, setPreview] = useState<{ role: PlayerRole; problem: string | null } | null>(null)
+  // Why the last drop was turned away, shown briefly under the pitch.
+  const [notice, setNotice] = useState<string | null>(null)
+
+  const pitchRef = useRef<HTMLDivElement>(null)
 
   // A small move or a short hold before a drag starts, so a click still selects
   // and a finger can still scroll the bench.
@@ -103,6 +143,12 @@ export function SquadPage() {
     }
   }, [])
 
+  useEffect(() => {
+    if (!notice) return
+    const timer = window.setTimeout(() => setNotice(null), NOTICE_MS)
+    return () => window.clearTimeout(timer)
+  }, [notice])
+
   const season = useQuery({
     queryKey: ['season', seasonId],
     queryFn: () => seasonApi.get(seasonId),
@@ -117,33 +163,47 @@ export function SquadPage() {
 
   // Start from what the club is already set up to play.
   useEffect(() => {
-    if (!squadTeam || starterIds !== null) return
+    if (!squadTeam || spots !== null) return
 
     const shape = FORMATIONS.includes(squadTeam.formation) ? squadTeam.formation : '4-4-2'
     setFormation(shape)
 
-    const saved = squadTeam.players
-      .filter((p) => p.isStarter)
-      .sort((a, b) => a.lineupSlot - b.lineupSlot)
+    const saved = squadTeam.players.filter((p) => p.isStarter)
 
-    // The saved order is what the shape asks for only when every starter has a
-    // slot and there are eleven of them. A squad seeded before slots existed,
-    // or one left short by injuries, is laid out from scratch instead — the
-    // order is what names each player's job, so a wrong order mislabels them.
+    // A side the manager arranged by hand stands exactly where it was left.
+    // Anything but a number — null, or missing from an older API — means the
+    // player was never placed, and the shape lays them out instead.
+    const placedByHand = saved.flatMap((p) =>
+      typeof p.pitchX === 'number' && typeof p.pitchY === 'number'
+        ? [[p.id, { x: p.pitchX, y: p.pitchY }] as const]
+        : [],
+    )
+
+    if (saved.length === 11 && placedByHand.length === 11) {
+      setSpots(Object.fromEntries(placedByHand))
+      return
+    }
+
+    // Otherwise it is laid out from the shape. The saved order names each
+    // player's slot only when every starter has one and there are eleven; a
+    // squad left short by injuries is picked again from scratch.
+    const bySlot = [...saved].sort((a, b) => a.lineupSlot - b.lineupSlot)
     const ordered =
-      saved.length === 11 && saved.every((p, index) => p.lineupSlot === index + 1)
-        ? saved.map((p) => p.id)
+      bySlot.length === 11 && bySlot.every((p, index) => p.lineupSlot === index + 1)
+        ? bySlot.map((p) => p.id)
         : pickForFormation(shape, squadTeam.players)
 
-    setStarterIds(ordered)
-  }, [squadTeam, starterIds])
+    setSpots(presetSpots(shape, ordered))
+  }, [squadTeam, spots])
 
   const save = useMutation({
-    mutationFn: () =>
-      seasonApi.setLineup(seasonId, {
+    mutationFn: () => {
+      const placed = spots ?? {}
+      return seasonApi.setLineup(seasonId, {
         formation: formation ?? '4-4-2',
-        starterIds: starterIds ?? [],
-      }),
+        starters: inPitchOrder(placed).map((id) => ({ playerId: id, ...placed[id] })),
+      })
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['teams', seasonId] })
     },
@@ -182,34 +242,28 @@ export function SquadPage() {
     )
   }
 
-  const chosen = starterIds ?? []
+  const placed = spots ?? {}
   const shape = formation ?? '4-4-2'
-  const slots = FORMATION_SLOTS[shape] ?? FORMATION_SLOTS['4-4-2']
 
-  /** The job the shape asks of whoever stands in a given shirt. */
-  const slotRole = (playerId: string): PlayerRole | null => {
-    const index = chosen.indexOf(playerId)
-    return index >= 0 && index < slots.length ? slots[index] : null
-  }
+  /** The job the spot a starter stands on asks of them, or null for the bench. */
+  const roleOf = (playerId: string): PlayerRole | null =>
+    placed[playerId] ? roleAt(placed[playerId]) : null
 
-  const starters = chosen
+  const starters = inPitchOrder(placed)
     .map((id) => squad.players.find((p) => p.id === id))
     .filter((player): player is Player => Boolean(player))
-  const bench = squad.players.filter((p) => !chosen.includes(p.id)).sort(byPosition)
+  const bench = squad.players.filter((p) => !placed[p.id]).sort(byPosition)
   const shown = selected ?? starters[0]
 
   const unavailable = starters.filter((p) => !p.isAvailable)
-  const keepers = starters.filter((p) => p.position === Position.GK).length
+  const problem = lineupProblem(rolesOf(placed))
 
-  // The shape itself is never refused: a manager short of midfielders may push
-  // a winger inside, and those players already lose part of their rating for
-  // it. What a side cannot do is field the wrong number of men, play someone
-  // who is injured or suspended, or take the field without a goalkeeper.
-  const canSave =
-    chosen.length === 11 && unavailable.length === 0 && keepers === 1
+  // Anyone may stand anywhere: the spot names the job, and a player away from
+  // their own role simply plays below their rating. What a side cannot do is
+  // field the wrong number of men, play someone injured or suspended, or break
+  // the shape's rules — one keeper, three at the back, one of each flank role.
+  const canSave = starters.length === 11 && unavailable.length === 0 && problem === null
 
-  // Anyone may go anywhere: the slot names the job, so the shape never breaks,
-  // and a player away from their own role simply plays below their rating.
   const swapOut = starters.find((p) => p.id === swapOutId) ?? null
 
   /**
@@ -229,35 +283,112 @@ export function SquadPage() {
       return
     }
 
-    setStarterIds(swapStarters(chosen, swapOut.id, player.id))
+    setSpots(swapSpots(placed, swapOut.id, player.id))
     setSwapOutId(null)
   }
 
   /**
    * Tapping the bench brings that player on. With someone marked, they take
-   * that exact place; otherwise the weakest player in the same line makes way,
+   * that exact spot; otherwise the weakest player in the same line makes way,
    * so a single tap still works.
    */
   const bringOn = (benchPlayer: Player) => {
     const outgoing = swapOut
       ? swapOut
-        : [...starters]
-            .filter((p) => p.position === benchPlayer.position)
-            // Give up the shirt that suits its job least, and among equals the
-            // weakest player, so a single tap does not unseat a specialist.
-            .sort((a, b) => {
-              const roleA = slotRole(a.id)
-              const roleB = slotRole(b.id)
-              const fitA = roleA === null ? 1 : fitOf(a.role, roleA) === 'native' ? 1 : 0
-              const fitB = roleB === null ? 1 : fitOf(b.role, roleB) === 'native' ? 1 : 0
-              return fitA - fitB || a.overall - b.overall
-            })[0]
+      : [...starters]
+          .filter((p) => {
+            const role = roleOf(p.id)
+            return role !== null && lineOf(role) === benchPlayer.position
+          })
+          // Give up the shirt that suits its job least, and among equals the
+          // weakest player, so a single tap does not unseat a specialist.
+          .sort((a, b) => {
+            const roleA = roleOf(a.id)
+            const roleB = roleOf(b.id)
+            const fitA = roleA === null ? 1 : fitOf(a.role, roleA) === 'native' ? 1 : 0
+            const fitB = roleB === null ? 1 : fitOf(b.role, roleB) === 'native' ? 1 : 0
+            return fitA - fitB || a.overall - b.overall
+          })[0]
 
     if (!outgoing) return
 
-    setStarterIds(substitute(chosen, outgoing.id, benchPlayer.id))
+    setSpots(substitute(placed, outgoing.id, benchPlayer.id))
     setSelected(benchPlayer)
     setSwapOutId(null)
+  }
+
+  /**
+   * Where the dragged shirt's centre would land, as a spot, or null if it is
+   * off the grass. The shirt is drawn centred on its spot, so its centre is
+   * what the manager is aiming with.
+   */
+  const landing = (active: Active, delta: { x: number; y: number }): Spot | null => {
+    const pitch = pitchRef.current?.getBoundingClientRect()
+    const start = active.rect.current.initial
+    if (!pitch || !start) return null
+
+    const x = start.left + start.width / 2 + delta.x
+    const y = start.top + start.height / 2 + delta.y
+    if (x < pitch.left || x > pitch.right || y < pitch.top || y > pitch.bottom) return null
+
+    return clampSpot({
+      x: ((x - pitch.left) / pitch.width) * 100,
+      y: ((pitch.bottom - y) / pitch.height) * 100,
+    })
+  }
+
+  /**
+   * What letting go would do. Two starters trade spots, and a starter and a
+   * substitute trade between pitch and bench — neither changes the jobs on
+   * the pitch, so neither can break a rule. A starter let go on open grass
+   * moves there and takes the job that spot asks for, which can.
+   */
+  const outcomeOf = (active: Active, over: Over | null, delta: { x: number; y: number }): DropOutcome | null => {
+    const source = parseDragId(active.id)
+    if (!source || !over || over.id === active.id) return null
+
+    if (over.id === PITCH_DROP_ID) {
+      if (source.from !== 'starter') return null
+
+      const spot = landing(active, delta)
+      if (!spot) return null
+
+      const next = moveTo(placed, source.playerId, spot)
+      return { next, role: roleAt(spot), problem: lineupProblem(rolesOf(next)), playerId: source.playerId }
+    }
+
+    const target = parseDragId(over.id)
+    if (!target) return null
+
+    if (source.from === 'starter' && target.from === 'starter') {
+      return {
+        next: swapSpots(placed, source.playerId, target.playerId),
+        role: roleAt(placed[target.playerId]),
+        problem: null,
+        playerId: source.playerId,
+      }
+    }
+
+    if (source.from === 'bench' && target.from === 'starter') {
+      return {
+        next: substitute(placed, target.playerId, source.playerId),
+        role: roleAt(placed[target.playerId]),
+        problem: null,
+        playerId: source.playerId,
+      }
+    }
+
+    if (source.from === 'starter' && target.from === 'bench') {
+      const player = squad.players.find((p) => p.id === source.playerId)
+      return {
+        next: substitute(placed, source.playerId, target.playerId),
+        role: player?.role ?? roleAt(placed[source.playerId]),
+        problem: null,
+        playerId: source.playerId,
+      }
+    }
+
+    return null
   }
 
   const startDrag = ({ active }: DragStartEvent) => {
@@ -265,39 +396,46 @@ export function SquadPage() {
     const player = squad.players.find((p) => p.id === source?.playerId)
     if (!source || !player) return
 
+    setNotice(null)
     setDragging({
       player,
-      role: (source.from === 'starter' ? slotRole(player.id) : null) ?? player.role,
+      from: source.from,
+      role: (source.from === 'starter' ? roleOf(player.id) : null) ?? player.role,
     })
   }
 
-  /**
-   * What a drop means depends on where the player came from and where they
-   * landed: two starters trade places, a starter and a substitute trade
-   * between pitch and bench, and two substitutes leave things as they were.
-   */
-  const endDrag = ({ active, over }: DragEndEvent) => {
+  const moveDrag = ({ active, over, delta }: DragMoveEvent) => {
+    const outcome = outcomeOf(active, over, delta)
+    const next = outcome ? { role: outcome.role, problem: outcome.problem } : null
+
+    // Only re-render when what the shirt would show actually changes.
+    setPreview((current) =>
+      current?.role === next?.role && current?.problem === next?.problem ? current : next,
+    )
+  }
+
+  const endDrag = ({ active, over, delta }: DragEndEvent) => {
+    const outcome = outcomeOf(active, over, delta)
     setDragging(null)
-    if (!over || active.id === over.id) return
+    setPreview(null)
 
-    const source = parseDragId(active.id)
-    const target = parseDragId(over.id)
-    if (!source || !target) return
+    if (!outcome) return
 
-    let next = chosen
-    if (source.from === 'starter' && target.from === 'starter') {
-      next = swapStarters(chosen, source.playerId, target.playerId)
-    } else if (source.from === 'bench' && target.from === 'starter') {
-      next = substitute(chosen, target.playerId, source.playerId)
-    } else if (source.from === 'starter' && target.from === 'bench') {
-      next = substitute(chosen, source.playerId, target.playerId)
+    // A drop that would break the side is turned away: the player goes back
+    // where they were, and the manager is told why.
+    if (outcome.problem) {
+      setNotice(outcome.problem)
+      return
     }
 
-    if (next === chosen) return
-
-    setStarterIds(next)
+    setSpots(outcome.next)
     setSwapOutId(null)
-    setSelected(squad.players.find((p) => p.id === source.playerId) ?? null)
+    setSelected(squad.players.find((p) => p.id === outcome.playerId) ?? null)
+  }
+
+  const cancelDrag = () => {
+    setDragging(null)
+    setPreview(null)
   }
 
   const applyFormation = (next: string) => {
@@ -306,7 +444,7 @@ export function SquadPage() {
 
     // Fill each slot with the player who actually plays that job, so switching
     // shape puts a right-back at right-back rather than the next best defender.
-    setStarterIds(pickForFormation(next, squad.players, chosen))
+    setSpots(presetSpots(next, pickForFormation(next, squad.players, inPitchOrder(placed))))
   }
 
   return (
@@ -343,11 +481,10 @@ export function SquadPage() {
             onClick={() => save.mutate()}
             disabled={!canSave || save.isPending}
             title={
-              keepers !== 1
-                ? `İlk 11-də bir qapıçı olmalıdır (${keepers} seçilib)`
-                : unavailable.length > 0
-                  ? `Oynaya bilməyən oyunçular ilk 11-dədir: ${unavailable.map((p) => p.name).join(', ')}`
-                  : undefined
+              problem ??
+              (unavailable.length > 0
+                ? `Oynaya bilməyən oyunçular ilk 11-dədir: ${unavailable.map((p) => p.name).join(', ')}`
+                : undefined)
             }
             className="rounded-lg bg-violet px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-violet/85 disabled:cursor-not-allowed disabled:opacity-40"
           >
@@ -372,8 +509,9 @@ export function SquadPage() {
         sensors={sensors}
         collisionDetection={dropTarget}
         onDragStart={startDrag}
+        onDragMove={moveDrag}
         onDragEnd={endDrag}
-        onDragCancel={() => setDragging(null)}
+        onDragCancel={cancelDrag}
       >
         <div className="grid gap-5 lg:justify-center lg:grid-cols-[16rem_minmax(0,42rem)_18rem]">
           <section className="order-2 lg:order-none">
@@ -401,14 +539,20 @@ export function SquadPage() {
           <section>
             <PitchView
               players={starters}
+              spots={placed}
               selectedId={swapOutId ?? selected?.id}
               onSelect={tapStarter}
-              slotRoleOf={(player) => slotRole(player.id)}
-              formation={shape}
+              formation={shapeLabel(rolesOf(placed))}
               draggable
+              showZones={dragging?.from === 'starter'}
+              pitchRef={pitchRef}
             />
 
-            {swapOut ? (
+            {notice ? (
+              <p role="status" className="mt-2.5 text-sm font-medium text-loss">
+                ✕ {notice}
+              </p>
+            ) : swapOut ? (
               <p className="mt-2.5 flex flex-wrap items-center gap-2 rounded-md border border-violet/40 bg-violet/10 px-3 py-2 text-sm">
                 <span className="font-semibold">{swapOut.name}</span>
                 <span className="text-muted">
@@ -424,8 +568,9 @@ export function SquadPage() {
               </p>
             ) : (
               <p className="mt-2.5 text-[0.7rem] text-muted">
-                Oyunçunu sürükləyib başqasının üstünə buraxın: meydanda yerlərini dəyişir,
-                ehtiyatla isə əvəz olunur. Basıb seçmək də işləyir.
+                Oyunçunu meydanın istənilən yerinə sürükləyin: dayandığı yer onun mövqeyini
+                təyin edir. Başqasının üstünə buraxanda yerlərini dəyişir, ehtiyatla isə əvəz
+                olunur.
               </p>
             )}
 
@@ -436,13 +581,23 @@ export function SquadPage() {
             </div>
           </section>
 
-          <aside className="order-3 lg:order-none">{shown && <PlayerDetail player={shown} />}</aside>
+          <aside className="order-3 lg:order-none">
+            {shown && <PlayerDetail player={shown} playedRole={roleOf(shown.id)} />}
+          </aside>
         </div>
 
         <DragOverlay dropAnimation={null}>
           {dragging && (
-            <div className="flex cursor-grabbing flex-col items-center drop-shadow-xl">
-              <TokenFace player={dragging.player} role={dragging.role} mark="selected" />
+            <div
+              className={`flex cursor-grabbing flex-col items-center drop-shadow-xl ${
+                preview?.problem ? 'opacity-50 grayscale' : ''
+              }`}
+            >
+              <TokenFace
+                player={dragging.player}
+                role={preview?.role ?? dragging.role}
+                mark="selected"
+              />
             </div>
           )}
         </DragOverlay>
@@ -535,7 +690,10 @@ const ATTRIBUTES = [
   { key: 'physical', label: 'FİZ' },
 ] as const
 
-function PlayerDetail({ player }: { player: Player }) {
+function PlayerDetail({ player, playedRole }: { player: Player; playedRole: PlayerRole | null }) {
+  // A starter away from their own role is worth less there; say how much.
+  const away = playedRole !== null && playedRole !== player.role ? playedRole : null
+
   return (
     <section className="glass-card">
       <div className="mb-3 flex items-start justify-between gap-3">
@@ -554,8 +712,12 @@ function PlayerDetail({ player }: { player: Player }) {
         </div>
 
         <div className="shrink-0 text-right">
-          <div className="text-3xl leading-none font-black">{player.overall}</div>
-          <div className="text-[0.6rem] tracking-wide text-muted uppercase">OVR</div>
+          <div className="text-3xl leading-none font-black">
+            {away === null ? player.overall : ratingAs(player, away)}
+          </div>
+          <div className="text-[0.6rem] tracking-wide text-muted uppercase">
+            {away === null ? 'OVR' : `${ROLE_LABELS[away]} kimi · əsl ${player.overall}`}
+          </div>
         </div>
       </div>
 

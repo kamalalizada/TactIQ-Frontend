@@ -89,9 +89,23 @@ const NEIGHBOURS: Record<Role, Role[]> = {
   [PlayerRole.ST]: [PlayerRole.CAM],
 }
 
+/** Which flank a wide attacking role works, or null for anyone else. */
+function flankOf(role: Role): 'left' | 'right' | null {
+  if (role === PlayerRole.LW || role === PlayerRole.LM) return 'left'
+  if (role === PlayerRole.RW || role === PlayerRole.RM) return 'right'
+  return null
+}
+
 /** How well a player copes in a role that is not their own, as the engine rates it. */
 export function roleFitness(natural: Role, playedAs: Role): number {
   if (natural === playedAs) return 1
+
+  // Winger and wide midfielder are one job on a given flank; the other flank
+  // costs a tenth.
+  const naturalFlank = flankOf(natural)
+  const playedFlank = flankOf(playedAs)
+  if (naturalFlank && playedFlank) return naturalFlank === playedFlank ? 1 : 0.9
+
   if (natural === PlayerRole.GK || playedAs === PlayerRole.GK) return 0.45
   if (NEIGHBOURS[natural].includes(playedAs)) return 0.94
 
@@ -109,7 +123,20 @@ export type Fit = 'native' | 'close' | 'poor'
 export function fitOf(natural: Role, playedAs: Role): Fit {
   const fitness = roleFitness(natural, playedAs)
   if (fitness === 1) return 'native'
-  return fitness >= 0.94 ? 'close' : 'poor'
+  return fitness >= 0.9 ? 'close' : 'poor'
+}
+
+/** A player's rating in the role they are filling, as the engine will play them. */
+export function ratingAs(player: Player, playedAs: Role): number {
+  return Math.max(1, roundHalfEven(player.overall * roleFitness(player.role, playedAs)))
+}
+
+/** Rounds a .5 to the even neighbour, as the backend's Math.Round does, so both agree on 76.5. */
+function roundHalfEven(value: number): number {
+  const floor = Math.floor(value)
+  const fraction = value - floor
+  if (Math.abs(fraction - 0.5) > 1e-9) return Math.round(value)
+  return floor % 2 === 0 ? floor : floor + 1
 }
 
 /**

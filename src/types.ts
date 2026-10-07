@@ -134,6 +134,12 @@ export interface Player {
   isStarter: boolean
   /** Where a starter stands in the shape, counted across each line from the left. */
   lineupSlot: number
+  /** Where the manager placed a starter, as a percentage from the left touchline; null if never placed. */
+  pitchX: number | null
+  /** How far up the pitch a placed starter stands, as a percentage from their own goal line. */
+  pitchY: number | null
+  /** The job the spot a starter was placed on asks of them. */
+  lineupRole: PlayerRole | null
   /** Fitness carried between matches, 0-100. */
   condition: number
   matchesInjured: number
@@ -401,9 +407,17 @@ export interface HeadToHeadSummary {
   matches: HeadToHeadMatch[]
 }
 
+/** One starter and the spot they were placed on; the spot decides their job. */
+export interface LineupSpot {
+  playerId: string
+  x: number
+  y: number
+}
+
 export interface SetLineupRequest {
+  /** The preset shape the manager last picked, which the spots were laid out from. */
   formation: string
-  starterIds: string[]
+  starters: LineupSpot[]
 }
 
 /** When the market is open. Mirrors the backend's TransferWindow. */
