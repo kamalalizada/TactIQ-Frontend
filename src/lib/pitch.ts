@@ -23,9 +23,13 @@ export function roleAt({ x, y }: Spot): Role {
   if (y < 13 && x >= 25 && x <= 75) return PlayerRole.GK
 
   if (y < 35) {
-    if (x < 28) return PlayerRole.LB
-    if (x > 72) return PlayerRole.RB
-    return PlayerRole.CB
+    if (x >= 28 && x <= 72) return PlayerRole.CB
+
+    // Wide and deep is a full-back; wide and pushed on is a wing-back, which
+    // is the same player given the whole flank.
+    const left = x < 28
+    if (y < 30) return left ? PlayerRole.LB : PlayerRole.RB
+    return left ? PlayerRole.LWB : PlayerRole.RWB
   }
 
   if (y < 68) {
@@ -50,11 +54,20 @@ export function clampSpot({ x, y }: Spot): Spot {
 }
 
 /** Roles that hold one flank, so a side has room for one of each. */
-const ONE_PER_SIDE: Role[] = [PlayerRole.LB, PlayerRole.RB, PlayerRole.LW, PlayerRole.RW]
+const ONE_PER_SIDE: Role[] = [
+  PlayerRole.LB,
+  PlayerRole.RB,
+  PlayerRole.LWB,
+  PlayerRole.RWB,
+  PlayerRole.LW,
+  PlayerRole.RW,
+]
 
 const ROLE_NAMES: Partial<Record<Role, string>> = {
   [PlayerRole.LB]: 'LB',
   [PlayerRole.RB]: 'RB',
+  [PlayerRole.LWB]: 'LWB',
+  [PlayerRole.RWB]: 'RWB',
   [PlayerRole.LW]: 'LW',
   [PlayerRole.RW]: 'RW',
 }
@@ -93,6 +106,11 @@ const PRESET_SPOTS: Record<Role, Spot> = {
   [PlayerRole.LB]: { x: 12, y: 28 },
   [PlayerRole.CB]: { x: 50, y: 24 },
   [PlayerRole.RB]: { x: 88, y: 28 },
+
+  // A wing-back holds the flank from higher up than a full-back, which is how
+  // `roleAt` tells the two apart.
+  [PlayerRole.LWB]: { x: 11, y: 33 },
+  [PlayerRole.RWB]: { x: 89, y: 33 },
 
   [PlayerRole.CDM]: { x: 50, y: 42 },
   [PlayerRole.LM]: { x: 15, y: 52 },

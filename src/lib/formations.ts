@@ -35,8 +35,15 @@ export const FORMATION_SLOTS: Record<string, Role[]> = {
   '3-5-2': [
     PlayerRole.GK,
     PlayerRole.CB, PlayerRole.CB, PlayerRole.CB,
-    PlayerRole.LM, PlayerRole.CM, PlayerRole.CDM, PlayerRole.CM, PlayerRole.RM,
+    PlayerRole.LWB, PlayerRole.CM, PlayerRole.CDM, PlayerRole.CM, PlayerRole.RWB,
     PlayerRole.ST, PlayerRole.ST,
+  ],
+  '3-4-2-1': [
+    PlayerRole.GK,
+    PlayerRole.CB, PlayerRole.CB, PlayerRole.CB,
+    PlayerRole.LWB, PlayerRole.CM, PlayerRole.CM, PlayerRole.RWB,
+    PlayerRole.CAM, PlayerRole.CAM,
+    PlayerRole.ST,
   ],
   '5-3-2': [
     PlayerRole.GK,
@@ -61,7 +68,13 @@ export const FORMATION_SLOTS: Record<string, Role[]> = {
 /** The line of the pitch a role belongs to. */
 export function lineOf(role: Role): Position {
   if (role === PlayerRole.GK) return Position.GK
-  if (role === PlayerRole.LB || role === PlayerRole.CB || role === PlayerRole.RB) {
+  if (
+    role === PlayerRole.LB ||
+    role === PlayerRole.CB ||
+    role === PlayerRole.RB ||
+    role === PlayerRole.LWB ||
+    role === PlayerRole.RWB
+  ) {
     return Position.DEF
   }
   if (role === PlayerRole.LW || role === PlayerRole.ST || role === PlayerRole.RW) {
@@ -76,9 +89,9 @@ export function lineOf(role: Role): Position {
  */
 const NEIGHBOURS: Record<Role, Role[]> = {
   [PlayerRole.GK]: [],
-  [PlayerRole.LB]: [PlayerRole.RB, PlayerRole.LM],
+  [PlayerRole.LB]: [PlayerRole.RB, PlayerRole.LM, PlayerRole.LWB],
   [PlayerRole.CB]: [PlayerRole.CDM],
-  [PlayerRole.RB]: [PlayerRole.LB, PlayerRole.RM],
+  [PlayerRole.RB]: [PlayerRole.LB, PlayerRole.RM, PlayerRole.RWB],
   [PlayerRole.CDM]: [PlayerRole.CM, PlayerRole.CB],
   [PlayerRole.CM]: [PlayerRole.CDM, PlayerRole.CAM],
   [PlayerRole.CAM]: [PlayerRole.CM, PlayerRole.ST],
@@ -87,13 +100,31 @@ const NEIGHBOURS: Record<Role, Role[]> = {
   [PlayerRole.LW]: [PlayerRole.LM, PlayerRole.RW],
   [PlayerRole.RW]: [PlayerRole.RM, PlayerRole.LW],
   [PlayerRole.ST]: [PlayerRole.CAM],
+  // A wing-back is his flank's full-back asked to get forward, and its wide
+  // midfielder asked to defend.
+  [PlayerRole.LWB]: [PlayerRole.LB, PlayerRole.LM],
+  [PlayerRole.RWB]: [PlayerRole.RB, PlayerRole.RM],
 }
 
-/** Which flank a wide attacking role works, or null for anyone else. */
+/** Which flank a role works, or null for anyone central. */
 function flankOf(role: Role): 'left' | 'right' | null {
-  if (role === PlayerRole.LW || role === PlayerRole.LM) return 'left'
-  if (role === PlayerRole.RW || role === PlayerRole.RM) return 'right'
+  if (role === PlayerRole.LW || role === PlayerRole.LM || role === PlayerRole.LWB) return 'left'
+  if (role === PlayerRole.RW || role === PlayerRole.RM || role === PlayerRole.RWB) return 'right'
   return null
+}
+
+/**
+ * Whether a role is a wide attacking job. Winger and wide midfielder are
+ * interchangeable on a flank; a wing-back, who holds the same flank from the
+ * back line, is not one of them.
+ */
+function isWideAttacking(role: Role): boolean {
+  return (
+    role === PlayerRole.LW ||
+    role === PlayerRole.RW ||
+    role === PlayerRole.LM ||
+    role === PlayerRole.RM
+  )
 }
 
 /** How well a player copes in a role that is not their own, as the engine rates it. */
@@ -101,10 +132,18 @@ export function roleFitness(natural: Role, playedAs: Role): number {
   if (natural === playedAs) return 1
 
   // Winger and wide midfielder are one job on a given flank; the other flank
-  // costs a tenth.
+  // costs a tenth. A wing-back shares the flank but defends first, so he falls
+  // through to the neighbour and line rules rather than reading as at home at
+  // winger.
   const naturalFlank = flankOf(natural)
   const playedFlank = flankOf(playedAs)
-  if (naturalFlank && playedFlank) return naturalFlank === playedFlank ? 1 : 0.9
+
+  if (isWideAttacking(natural) && isWideAttacking(playedAs)) {
+    return naturalFlank === playedFlank ? 1 : 0.9
+  }
+
+  // Either way, the wrong flank is the wrong foot.
+  if (naturalFlank && playedFlank && naturalFlank !== playedFlank) return 0.9
 
   if (natural === PlayerRole.GK || playedAs === PlayerRole.GK) return 0.45
   if (NEIGHBOURS[natural].includes(playedAs)) return 0.94

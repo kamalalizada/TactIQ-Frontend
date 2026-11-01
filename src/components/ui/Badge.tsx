@@ -54,6 +54,8 @@ const ROLE_LINE_COLOURS: Record<PlayerRole, string> = {
   [PlayerRole.LB]: 'border-l-pos-def',
   [PlayerRole.CB]: 'border-l-pos-def',
   [PlayerRole.RB]: 'border-l-pos-def',
+  [PlayerRole.LWB]: 'border-l-pos-def',
+  [PlayerRole.RWB]: 'border-l-pos-def',
   // A holding midfielder is printed apart from the rest of the middle, in the
   // keeper's amber, the way a football game's team sheet does it.
   [PlayerRole.CDM]: 'border-l-pos-gk',

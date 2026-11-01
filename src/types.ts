@@ -24,6 +24,9 @@ export const PlayerRole = {
   LW: 9,
   ST: 10,
   RW: 11,
+  // Wing-backs come after the rest so stored roles keep their meaning.
+  LWB: 12,
+  RWB: 13,
 } as const
 export type PlayerRole = (typeof PlayerRole)[keyof typeof PlayerRole]
 
@@ -41,6 +44,8 @@ export const ROLE_LABELS: Record<PlayerRole, string> = {
   [PlayerRole.LW]: 'LW',
   [PlayerRole.ST]: 'ST',
   [PlayerRole.RW]: 'RW',
+  [PlayerRole.LWB]: 'LWB',
+  [PlayerRole.RWB]: 'RWB',
 }
 
 export const TacticalStyle = { Defensive: 0, Balanced: 1, Attacking: 2 } as const
@@ -130,6 +135,15 @@ export interface Player {
   dribbling: number
   defending: number
   physical: number
+
+  // Goalkeeping; zero for an outfield player.
+  diving: number
+  handling: number
+  kicking: number
+  reflexes: number
+  speed: number
+  positioning: number
+
   overall: number
   isStarter: boolean
   /** Where a starter stands in the shape, counted across each line from the left. */

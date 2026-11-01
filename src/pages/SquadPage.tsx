@@ -690,6 +690,19 @@ const ATTRIBUTES = [
   { key: 'physical', label: 'FİZ' },
 ] as const
 
+/**
+ * A keeper is judged on different things entirely. Showing him pace and
+ * shooting says nothing about whether he will keep the ball out.
+ */
+const KEEPER_ATTRIBUTES = [
+  { key: 'reflexes', label: 'REF' },
+  { key: 'positioning', label: 'MÖV' },
+  { key: 'handling', label: 'TUT' },
+  { key: 'diving', label: 'UÇU' },
+  { key: 'kicking', label: 'VUR' },
+  { key: 'speed', label: 'SÜR' },
+] as const
+
 function PlayerDetail({ player, playedRole }: { player: Player; playedRole: PlayerRole | null }) {
   // A starter away from their own role is worth less there; say how much.
   const away = playedRole !== null && playedRole !== player.role ? playedRole : null
@@ -722,7 +735,10 @@ function PlayerDetail({ player, playedRole }: { player: Player; playedRole: Play
       </div>
 
       <dl className="space-y-1.5">
-        {ATTRIBUTES.map((attribute) => (
+        {(player.position === Position.GK && player.reflexes > 0
+          ? KEEPER_ATTRIBUTES
+          : ATTRIBUTES
+        ).map((attribute) => (
           <div key={attribute.key} className="flex items-center gap-2">
             <dt className="w-8 shrink-0 text-[0.65rem] text-muted">{attribute.label}</dt>
             <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg">
